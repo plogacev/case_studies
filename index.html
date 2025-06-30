@@ -140,7 +140,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="price-distribution-elicitation-from-an-llm" class="level2">
 <h2 class="anchored" data-anchor-id="price-distribution-elicitation-from-an-llm">3. Price Distribution Elicitation from an LLM</h2>
 <p><strong>Two-stage price distribution elicitation pipeline using GhatGPT.</strong> Demonstrates a two-stage pipeline that uses large language models (LLMs) to elicit reasonable price distributions for consumer products when competitor pricing data is insufficient or historical sales data is sparse. It extracts structured product attributes from free-text titles and descriptions (via GPT-3.5-turbo), then uses GPT-4o to elicit a retail price range (minimum, typical, maximum) based on those attributes and regional context. The elicited price ranges are used to reverse-engineer log-normal distribution parameters, which are validated against actual prices scraped from Mercado Libre. The result is a calibrated, probabilistic estimate of product pricing grounded in LLM-elicited knowledge.</p>
-<p>🔗 <a href="price_distribution_elicitation">Project Documentation + Code</a></p>
+<p>🔗 <a href="pricedist_elicitation">Project Documentation + Code</a></p>
 <!-- -->
 
 </section>
@@ -653,7 +653,7 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 <span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>**Two-stage price distribution elicitation pipeline using GhatGPT.** Demonstrates a two-stage pipeline that uses large language models (LLMs) to elicit reasonable price distributions for consumer products when competitor pricing data is insufficient or historical sales data is sparse. It extracts structured product attributes from free-text titles and descriptions (via GPT-3.5-turbo), then uses GPT-4o to elicit a retail price range (minimum, typical, maximum) based on those attributes and regional context. The elicited price ranges are used to reverse-engineer log-normal distribution parameters, which are validated against actual prices scraped from Mercado Libre. The result is a calibrated, probabilistic estimate of product pricing grounded in LLM-elicited knowledge.</span>
 <span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>🔗 <span class="co">[</span><span class="ot">Project Documentation + Code</span><span class="co">](price_distribution_elicitation)</span></span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>🔗 <span class="co">[</span><span class="ot">Project Documentation + Code</span><span class="co">](pricedist_elicitation)</span></span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->
 
