@@ -12,7 +12,7 @@ engine: knitr
 editor: visual
 ---
 
-```{r setup, include=FALSE}
+```{r setup, eval=FALSE, include=FALSE}
 this_dir <- dirname(knitr::current_input())
 setwd(this_dir)
 ```
@@ -395,6 +395,8 @@ product_prices_pd = product_prices.to_pandas()
 product_prices <- py$product_prices$to_pandas() %>% filter(!is.na(typical))
 ```
 
+### Accuracy on List Prices
+
 -   The plot below shows the actual product list prices in USD (x-axis), along with the elicited prices (y-axis). Both axes are on the log-scale. The vertical bars correspond to price range. Even though there are significant deviations, we can see that the model produces price estimates close to the observed list price.
 
 ```{r fig.width=6, fig.height=6}
@@ -411,6 +413,8 @@ product_prices %>% filter(!is.na(typical)) %>%
   ylab("Elicited price in USD (log-scale)")
 
 ```
+
+### Accuracy on Discounted Prices
 
 -   This plot shows the discounted prices in USD (x-axis), along with the elicited prices (y-axis). This plot shows that elicited prices tend to be higher than observed discounted prices.
 
@@ -430,13 +434,21 @@ product_prices %>% filter(!is.na(typical)) %>%
 
 ```
 
+## Price Distributions
+
 The elicited price range tends to overestimate actual prices more often than it underestimates them. This is not particularly surprising if we assume that the distribution of market prices for a given product is right-skewed, as is the case with a log-normal distribution.
 
 To reason more clearly about how these price estimates come about, we adopt a stylized model of the generative process:
 
 For each product type $i$, the LLM is exposed during training to a sample of $k_i$ observed prices.
 
-It returns: - the minimum of this sample as the lower bound, - the maximum as the upper bound, and - a typical price that likely corresponds to the median or mode of the sample (theoretically, the mode would be most defensible as a "typical" price).
+It returns:
+
+- the minimum of this sample as the lower bound,
+
+- the maximum as the upper bound, and
+
+- a typical price that likely corresponds to the median or mode of the sample (theoretically, the mode would be most defensible as a "typical" price).
 
 Of course, this model is a deliberate oversimplification. In practice, most products are not represented verbatim in the training data. Instead, the LLM likely draws on similar products and generalizes across categories. But even so, this toy model helps clarify what kind of information the LLM is plausibly encoding and returning — namely, some noisy abstraction over a finite sample of real-world prices with unknown size.
 
@@ -444,14 +456,16 @@ Of course, this model is a deliberate oversimplification. In practice, most prod
 product_prices %>% summarize(
   perc_list_price_lower = mean(price_usd < lower),
   perc_list_price_higher = mean(price_usd > upper) 
-)
+
 ```
+
+### Simple Log-Normal Model
 
 -   The goal is to use the LLM-generated estimates to infer a plausible price distribution for each product.
 -   Ideally, this would involve modeling the generative process explicitly—treating the elicited range and typical price as functions of latent price distributions, and marginalizing over unknown parameters such as the sample size and distributional shape.
 -   In practice, however, we take a simpler approach: we calibrate the parameters of a log-normal distribution such that the observed proportions of actual prices falling below or above the elicited range align with the expected coverage probabilities. Given our above-stated assumptions, we can reverse-engineer the values of the log-normal parameters $\mu_i$, $\sigma_i$ for each product $i$, using the relationship below. Solving these equations gives estimates of $\mu$ and $\sigma$ for each product.
 
-$$ \text{lower} = \mu + z_{0.3} \cdot \sigma $$ $$ \text{upper} = \mu + z_{0.8} \cdot \sigma $$
+$$ log(\text{lower}) = \mu + z_{0.3} \cdot \sigma $$ $$ log(\text{upper}) = \mu + z_{0.8} \cdot \sigma $$
 
 ```{r}
 # Define z-scores for assumed quantile boundaries of the elicited range
@@ -463,14 +477,26 @@ product_prices <-
   py$product_prices_pd %>%
   filter(!is.na(lower) & !is.na(upper) & !is.na(price_usd)) %>%
   mutate(
-    log_sigma = (log(upper) - log(lower)) / (z_upper - z_lower),
-    log_mu = log(lower) - log_sigma * z_lower
+    p1_log_sigma = (log(upper) - log(lower)) / (z_upper - z_lower),
+    p1_log_mu = log(lower) - p1_log_sigma * z_lower
   )
 ```
 
-We then validate this calibration by checking how well the empirical price data agrees with the implied distribution. Specifically, we: 1. Use the calibrated $\mu$ and $\sigma$ to compute a range of quantiles. 2. For each theoretical quantile, we calculate the proportion of real prices that fall under it. 3. We compare these empirical proportions to the theoretical coverage probabilities.
+We then validate this calibration by checking how well the empirical price data agrees with the implied distribution. Specifically, we:
 
-If the calibration is good, the empirical and theoretical values should match closely. If not, it suggests that either: - The log-normal assumption is inadequate, - The quantile interpretation of the LLM's bounds is incorrect, - Or there are systematic biases (e.g., skewed sampling, outliers, etc.).
+1.  Use the calibrated $\mu$ and $\sigma$ to compute a range of quantiles.
+
+2.  For each theoretical quantile, we calculate the proportion of real prices that fall under it.
+
+3.  We compare these empirical proportions to the theoretical coverage probabilities.
+
+If the calibration is good, the empirical and theoretical values should match closely. If not, it suggests that either:
+
+-   The log-normal assumption is inadequate
+
+-   The quantile interpretation of the LLM's bounds is incorrect
+
+-   Or there are systematic biases (e.g., skewed sampling, outliers, etc.)
 
 ```{r fig.width=6, fig.height=6}
 # Define theoretical cumulative probabilities to test calibration
@@ -478,7 +504,80 @@ calibration_probs <- c(0.01, seq(0.05, 0.95, 0.05), 0.99)
 
 # For each quantile level, compute predicted price threshold and empirical coverage
 empirical_cdfs <- sapply(calibration_probs, function(p) {
-  predicted_threshold <- with(product_prices, exp(log_mu + log_sigma * qnorm(p)))
+  predicted_threshold <- with(product_prices, exp(p1_log_mu + p1_log_sigma * qnorm(p)))
+  mean(product_prices$price_usd < predicted_threshold)
+})
+
+# Assemble calibration data frame
+calibration_df <- data.frame(
+  theoretical_cdf = calibration_probs,
+  empirical_cdf = empirical_cdfs
+)
+
+# Plot calibration curve
+ggplot(calibration_df, aes(x = theoretical_cdf, y = empirical_cdf)) +
+  geom_point() + geom_line() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "red") +
+  labs(
+    x = "Target quantile (log-normal model)",
+    y = "Observed proportion below quantile",
+    title = "Calibration Plot: Log-normal Model vs. Observed Prices"
+  ) +
+  theme_bw()
+```
+
+It seems that the probability estimates are well-calibrated. Each theoretical quantile corresponds to an approximately equal empirical proportion.
+
+### Shifted Log-Normal Model
+
+-   While the simple log-normal model appears to do a decent job of accounting for individual product price distributions, the log-normal has support on the entire real line, which means that all positive prices are possible, even if they are not very likely.
+-   In reality, this may lead to an excessive amount of probability mass being allocated to unrealistically small prices.
+-    As a solution, it may make sense to model individual product prices as *shifted log-normals.*
+
+$$ log(\text{lower} - delta) = \mu + z_{0.3} \cdot \sigma $$
+$$ log(\text{mode} - delta) = \mu -\sigma^2 $$
+$$ log(\text{median} - delta) = \mu + z_{0.5} \cdot \sigma $$
+$$ log(\text{upper} - delta) = \mu + z_{0.8} \cdot \sigma $$
+
+```{r}
+# Define z-scores for assumed quantile boundaries of the elicited range
+z_lower <- qnorm(0.3)
+z_upper <- qnorm(0.8)
+
+# Calibrate log-normal parameters assuming lower and upper are 30% and 80% quantiles
+product_prices <- 
+  py$product_prices_pd %>%
+  filter(!is.na(lower) & !is.na(upper) & !is.na(price_usd)) %>%
+  mutate(
+    p2_delta = (log(upper) - log(lower)) / (z_upper - z_lower),
+    p2_log_sigma = (log(upper) - log(lower)) / (z_upper - z_lower),
+    p2_log_mu = log(lower) - p1_log_sigma * z_lower
+  )
+```
+
+We then validate this calibration by checking how well the empirical price data agrees with the implied distribution. Specifically, we:
+
+1.  Use the calibrated $\mu$ and $\sigma$ to compute a range of quantiles.
+
+2.  For each theoretical quantile, we calculate the proportion of real prices that fall under it.
+
+3.  We compare these empirical proportions to the theoretical coverage probabilities.
+
+If the calibration is good, the empirical and theoretical values should match closely. If not, it suggests that either:
+
+-   The log-normal assumption is inadequate
+
+-   The quantile interpretation of the LLM's bounds is incorrect
+
+-   Or there are systematic biases (e.g., skewed sampling, outliers, etc.)
+
+```{r fig.width=6, fig.height=6}
+# Define theoretical cumulative probabilities to test calibration
+calibration_probs <- c(0.01, seq(0.05, 0.95, 0.05), 0.99)
+
+# For each quantile level, compute predicted price threshold and empirical coverage
+empirical_cdfs <- sapply(calibration_probs, function(p) {
+  predicted_threshold <- with(product_prices, exp(p1_log_mu + p1_log_sigma * qnorm(p)))
   mean(product_prices$price_usd < predicted_threshold)
 })
 

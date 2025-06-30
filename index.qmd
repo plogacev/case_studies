@@ -14,7 +14,7 @@ engine: knitr
 editor: visual
 ---
 
-# Experimental Data Science Projects
+# 
 
 ## 1. Time Series Elasticity Analysis
 
