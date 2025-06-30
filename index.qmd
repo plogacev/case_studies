@@ -1,5 +1,5 @@
 ---
-title: "Experimental Data Science Projects"
+title: "Data Science Case Studies"
 author:
   name: "Pavel Logačev"
   email: "pavel@example.com"
