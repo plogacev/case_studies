@@ -1,0 +1,607 @@
+---
+title: " Product Grouping Analysis"
+author: "Pavel Logačev"
+date: "r Sys.Date()"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+```{r setup, eval=FALSE, include=FALSE}
+this_dir <- dirname(knitr::current_input())
+setwd(this_dir)
+```
+
+### 1.1 Notebook Settings
+
+```{python message=FALSE, warning=FALSE}
+## set transformer model 
+#py_model_name = 'all-MiniLM-L6-v2' # primarily English
+#py_model_name = 'paraphrase-multilingual-MiniLM-L12-v2' # multilingual
+py_model_name = 'LaBSE' 
+#py_model_name = 'xlm-r-100langs-bert-base-nli-stsb-mean-tokens' 
+py_model_name = 'intfloat/multilingual-e5-base'
+
+
+# runner ups to try, according to ChatGPT:
+# - XLM-RoBERTa
+# - mBART-50
+# - MT5 (Multilingual T5)
+# - ByT5 (handles raw text at the byte level, ideal for multilingual similarity tasks).
+# - mLUKE (multilingual version of LUKE, good for named entity recognition and contextual understanding).
+# - mBERT (baseline multilingual BERT, effective but less performant than XLM-R).
+
+n_cores = 8
+```
+
+### 1.2 Load Packages
+
+```{python message=FALSE, warning=FALSE}
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+os.environ["SIM_EMBEDDINGS_CORES"] = f"{n_cores}"
+
+import pandas as pd
+import polars as pl
+
+import random
+import pickle
+import numpy as np
+from tqdm import tqdm
+import sentence_transformers as st
+
+import nltk
+from nltk.tokenize import word_tokenize
+
+import gensim
+from gensim.models import Word2Vec
+
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.decomposition import PCA
+
+import multiprocessing
+multiprocessing.set_start_method("forkserver", force=True)
+
+import torch
+torch.set_num_threads(n_cores)
+
+from plotnine import *
+
+from collections import defaultdict
+
+import json
+from scipy.cluster.hierarchy import linkage, to_tree
+
+
+#from joblib import Memory
+#compute_memory = Memory("./cache", verbose=0)
+
+
+```
+
+### 1.3 Globally Used Code
+
+```{python message=FALSE, warning=FALSE}
+# Enable the underscore notation for polars columns, similar to ibis and dplyr (i.e., `pl.col("column_name")` -> `_.column_name`)
+class PolarsColumnNamespace:
+    def __getattr__(self, name):
+        return pl.col(name)
+
+# Enable _ as a shorthand for that class
+_ = PolarsColumnNamespace()
+```
+
+
+
+```{python message=FALSE, warning=FALSE}
+import os
+import pickle
+from functools import wraps
+
+def cache(func):
+    """
+    Decorator: Caches the result of func to a pickle file if fname_cache is given.
+    The decorated function must accept fname_cache as a keyword argument.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        fname_cache = kwargs.get("fname_cache", None)
+        
+        if fname_cache is not None and os.path.exists(fname_cache):
+            print(f"[CACHE] Loading from {fname_cache}")
+            with open(fname_cache, "rb") as f:
+                return pickle.load(f)
+        
+        print(f"[CACHE] Computing and caching to {fname_cache}")
+        result = func(*args, **kwargs)
+        
+        if fname_cache is not None:
+            with open(fname_cache, "wb") as f:
+                pickle.dump(result, f)
+            print(f"[CACHE] Saved to {fname_cache}")
+        
+        return result
+
+    return wrapper
+```
+
+
+
+
+
+## 2. Prepare Data
+
+### 2.1 Read Transactional Data
+
+mention that these are two datasets from UCI
+
+```{python message=FALSE, warning=FALSE}
+df1 = pl.read_excel('./data/online+retail/Online Retail.xlsx')
+df2 = pl.read_excel('./data/online+retail+ii/online_retail_II.xlsx')
+df2 = df2.rename({"Invoice": "InvoiceNo","Price": "UnitPrice", "Customer ID": "CustomerID"})
+df = df1.vstack(df2)
+```
+
+### 2.2 Clean Up Dataset
+
+#### 2.2.1 Missing Invoice IDs
+- A number of records do not have an invoice id. We'll exclude them, because we cannot use them to determine the basket co-occurrence frequencies for the respective entries.
+- This applies to $19500$ rows, i.e., $1.8\%$ of the records
+
+```{python message=FALSE, warning=FALSE}
+nrows_null = df.filter( _.InvoiceNo.is_null() ).shape[0]
+nrows_total = df.shape[0]
+(nrows_null, nrows_null / nrows_total)
+```
+
+```{python message=FALSE, warning=FALSE}
+# drop rows with null InvoiceNo
+df = df.filter( ~_.InvoiceNo.is_null() )
+```
+
+#### 2.2.2 Missing or Incorrect Product Descriptions
+- Some product descriptions indicate adjustments or comments rather than product names. In some cases, additional information is provided, and in others, they have been initially mislabeled.
+- We'll exclude the corresponding transactions from the data.
+- Exploratory analysis showed that nearly all proper product descriptions are uppercase, and those that are not fully uppercase are in title case.
+    - Thus, one heuristic to identify anomalous descriptions is calculating the relative number of uppercase letters at the start of a word.
+    
+```{python message=FALSE, warning=FALSE}
+df = ( df
+    .with_columns([
+        # Extract the count of lowercase letters starting a word and store it in a new column
+        _.Description.str.extract_all(r"[^A-Za-z][a-z]").list.len().alias("lowercase_start_count"),
+        # Extract the count of uppercase letters starting a word and store it in a new column
+        _.Description.str.extract_all(r"[^A-Za-z][A-Z]").list.len().alias("uppercase_start_count")
+    ])
+    .with_columns([
+        # Create a boolean column indicating if there are no letters starting a word
+        ( (_.lowercase_start_count == 0) & (_.uppercase_start_count == 0) ).alias("no_letter_start"),
+        # Create a boolean column indicating if there are more lowercase letters starting words than uppercase
+        (  _.lowercase_start_count > _.uppercase_start_count ).alias("largely_lowercase_start")
+    ])
+    .with_columns([
+        # Create a final boolean column indicating if the description is anomalous
+        ( _.largely_lowercase_start | _.no_letter_start | _.Description.is_null() ).alias("is_anomalous_description")
+    ])
+    # Drop the intermediate columns used for calculations
+    .drop(["lowercase_start_count", "uppercase_start_count", "no_letter_start", "largely_lowercase_start"])
+)
+```
+
+```{python eval=FALSE, message=FALSE, warning=FALSE}
+#  Verify that all descriptions classified as anomalous are so indeed
+print(df.filter(_.is_anomalous_description)["Description"].unique().to_list())
+```
+
+```{python eval=FALSE, message=FALSE, warning=FALSE}
+# Check all the remaining product descriptions
+print(df.filter(~_.is_anomalous_description)["Description"].unique().to_list())
+```
+
+- This applies to 4193 rows, i.e., $0.4\%$ of the records
+
+```{python message=FALSE, warning=FALSE}
+nrows_anomalous_description = df.filter(_.is_anomalous_description).shape[0]
+nrows_total = df.shape[0]
+(nrows_anomalous_description, nrows_anomalous_description / nrows_total)
+```
+
+```{python message=FALSE, warning=FALSE}
+# Extract the transaction IDs associated with anomalous descriptions
+anomalous_transactions = df.filter(_.is_anomalous_description).select(_.InvoiceNo).with_columns([pl.lit(True).alias("is_anomalous_invoice")])
+
+df = (df
+    # Join the main dataframe with the anomalous transactions to mark them
+    .join(anomalous_transactions, on="InvoiceNo", how="left")
+    # Filter out the rows where the invoice is marked as anomalous
+    .filter(_.is_anomalous_invoice.is_null())
+    # Drop the columns used for marking and filtering
+    .drop(["is_anomalous_description", "is_anomalous_invoice"])
+)
+```
+
+#### 2.3 Separate Transaction and Product Information
+
+- Here, we separate the transaction and product information
+
+```{python message=FALSE, warning=FALSE}
+transactions_df = df.select(_.InvoiceNo, _.StockCode)
+products_df = df.select(_.StockCode, _.Description).unique()
+```
+
+### 3. Product Description Embeddings
+
+#### 3.1 Create Unique Product Descriptions
+
+```{python message=FALSE, warning=FALSE}
+# Group by StockCode and count the occurrences, then sort by count in descending order and get the list of StockCodes
+stock_codes = (products_df
+    .group_by(_.StockCode)
+    .len()
+    .sort(_.len, descending=True)
+)["StockCode"].to_list()
+
+# Create a pivot table with StockCode as the index and Description as the values
+unique_product_descriptions = (products_df
+    # Add a row index for each StockCode
+    .with_columns( pl.arange(0, pl.len()).over("StockCode").alias("row_idx"))
+    .pivot( values="Description", index="row_idx", on="StockCode", aggregate_function="first")
+)[stock_codes]
+```
+
+```{python message=FALSE, warning=FALSE}
+# Display the pivot table
+unique_product_descriptions
+```
+
+```{python message=FALSE, warning=FALSE}
+product_descriptions = products_df.group_by("StockCode").agg(
+    pl.col("Description").str.concat(" / ").alias("Description")
+)
+```
+
+```{python message=FALSE, warning=FALSE}
+product_descriptions
+```
+
+#### 3.2 Create Description Embeddings
+
+
+```{python message=FALSE, warning=FALSE}
+
+
+def cache(func):
+    """
+    Decorator: Caches the result of func to a pickle file if fname_cache is given.
+    The decorated function must accept fname_cache as a keyword argument.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        fname_cache = kwargs.get("fname_cache", None)
+        
+        if fname_cache is not None and os.path.exists(fname_cache):
+            print(f"[CACHE] Loading from {fname_cache}")
+            with open(fname_cache, "rb") as f:
+                return pickle.load(f)
+        
+        print(f"[CACHE] Computing and caching to {fname_cache}")
+        result = func(*args, **kwargs)
+        
+        if fname_cache is not None:
+            with open(fname_cache, "wb") as f:
+                pickle.dump(result, f)
+            print(f"[CACHE] Saved to {fname_cache}")
+        
+        return result
+
+    return wrapper
+  
+@cache
+def encode_semantic_embeddings(description, prompt = None):
+  """ """
+  py_model = st.SentenceTransformer(py_model_name)
+  
+  prompts = [f"passage: Product: '{t}'" for t in description]
+  
+  embeddings = py_model.encode(
+      sentences = prompts, 
+      prompt = prompt,
+      show_progress_bar = True,
+      use_multiprocessing=True,
+      normalize_embeddings = True # note: apparently dot products can be used instead of cosine sim, if normalized
+  )
+
+  return embeddings
+```
+
+```{python message=FALSE, warning=FALSE}
+
+product_ids = product_descriptions["StockCode"].to_list()
+description = product_descriptions["Description"].to_list()
+
+prompts = [f"passage: Product: '{t}'" for t in description]
+
+#description = [
+#    "buy", "purchase",
+#    "cold", "chilly",
+#    "like", "enjoy",
+#    "finish", "complete",
+#    "meeting", "appointment"
+#]
+#product_ids = [str(product_id) for product_id in range(0, 10)]
+
+fname_embeddings = "./analysis1_embeddings_semantic.pkl"
+norm_embeddings_semantic = encode_semantic_embeddings(description, fname_cache=fname_embeddings)
+
+```
+
+## 4. Product Co-Occurrence Embeddings
+
+- similar (almost the same?) as product2vec: https://github.com/TheoVall-DS/product2vec/ 
+
+```{python message=FALSE, warning=FALSE}
+transactions = transactions_df.group_by("InvoiceNo").agg(
+    pl.col("StockCode").cast(pl.Utf8).alias("products")
+)["products"].to_list()
+```
+
+```{python message=FALSE, warning=FALSE}
+def resample_transactions(transactions):
+    """Resample and shuffle transactions to create a new dataset."""
+    
+    # Define a lambda function to shuffle a list
+    shuffle = lambda lst: random.sample(lst, k=len(lst))
+
+    # Resample the transactions to create a new dataset
+    resampled_transactions = shuffle(transactions)  # Resample with replacement
+    shuffled_transactions = [shuffle(transaction) for transaction in resampled_transactions]  # Shuffle the sentences
+
+    return shuffled_transactions
+```
+
+```{python message=FALSE, warning=FALSE}
+
+#@compute_memory.cache
+def encode_transactional_embeddings(product_ids, transactions, embedding_size=100, window=5, min_count=1):
+    """ Learn transactional embeddings with Word2Vec on baskets, aggregate for the given product_ids, and return normalized embeddings.
+    """
+    # Train Word2Vec once (CBOW: sg=0)
+    model = Word2Vec(
+        transactions,
+        vector_size=embedding_size,
+        window=window,
+        min_count=min_count,
+        sg=0,
+        workers=4
+    )
+
+    # Extract embeddings for requested product_ids
+    embeddings = []
+    for product_id in product_ids:
+        if product_id in model.wv:
+            emb = model.wv[product_id]
+        else:
+            emb = np.full(embedding_size, np.nan)  # fallback if missing
+        embeddings.append(emb)
+
+    embeddings = np.array(embeddings)
+
+    # L2-normalize each row
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1  # avoid division by zero
+    embeddings /= norms
+
+    return embeddings
+```
+
+```{python message=FALSE, warning=FALSE}
+
+@compute_memory.cache
+def encode_transactional_embeddings_(product_ids, transactions, embedding_size = 100, window = 5, min_count = 1, n_bootstrap = 1): #fname_cache = None
+    """ """
+
+    #if (not fname_cache is None) and os.path.exists(fname_cache):
+    #    embeddings = None
+    #    with open(fname_cache, "rb") as f:
+    #        bootstrap_embeddings, embeddings = pickle.load(f)
+    #    return np.array( embeddings )
+
+    # Number of resamples
+    bootstrap_embeddings = []
+
+    for _ in tqdm( range(n_bootstrap) ):
+        resampled_transactions = resample_transactions(transactions)  # Resample with replacement and re-shuffle the transactions
+        model = Word2Vec(transactions, vector_size=embedding_size, window=window, min_count=min_count, sg=0, workers=4)
+        bootstrap_embeddings.append({word: model.wv[word] for word in model.wv.index_to_key})
+        
+    #if (not fname_cache is None):
+    #    with open(fname_cache, "wb") as f:
+    #        pickle.dump(bootstrap_embeddings, f)
+
+    #bootstrap_embeddings = [ defaultdict(lambda: np.zeros(embedding_size), d) for d in bootstrap_embeddings ]
+
+    #embeddings = []
+    #for product_id in tqdm( product_ids ):
+    #    product_embeddings = [embedding[product_id] for embedding in bootstrap_embeddings]
+    #    aggregated_embedding = np.mean(product_embeddings, axis=0)
+    #    embeddings.append( aggregated_embedding )
+
+    #bootstrap_embeddings = [ dict(d) for d in bootstrap_embeddings ]
+    #if (not fname_cache is None):
+    #    with open(fname_cache, "wb") as f:
+    #        pickle.dump((bootstrap_embeddings, embeddings), f)
+
+    return np.array( embeddings )
+```
+
+```{python message=FALSE, warning=FALSE}
+```
+
+```{python message=FALSE, warning=FALSE}
+#%%time
+transactional_embedding_size = 100
+#transactional_window = 5
+transactional_window = np.max([len(x) for x in transactions]) - 1
+transactional_min_count = 1
+transactional_n_bootstrap = 1
+
+len(transactions)
+
+norm_embeddings_transactional = encode_transactional_embeddings( product_ids, transactions, 
+                                                                 embedding_size = transactional_embedding_size, 
+                                                                 window = transactional_window,
+                                                                 min_count = transactional_min_count)
+
+```
+
+```{python message=FALSE, warning=FALSE}
+
+```
+
+
+## 5. Similarity Quantification
+
+```{python message=FALSE, warning=FALSE}
+
+sim_semantic = cosine_similarity(norm_embeddings_semantic, norm_embeddings_semantic)
+sim_transactional = cosine_similarity(norm_embeddings_transactional, norm_embeddings_transactional)
+
+
+#sim = (sim - np.min(sim) ) / ( 1 - np.min(sim) )
+#sim = np.clip(sim, a_min=0, a_max=1)
+
+```
+
+```{r}
+
+library(reticulate)
+library(tidyverse)
+library(magrittr)
+
+sim_semantic = py$sim_semantic
+sim_transactional = py$sim_transactional
+
+dim(sim_semantic)
+dim(sim_transactional)
+
+diag(sim_semantic) <- NA
+diag(sim_transactional) <- NA
+
+#n = 4896
+#sim_semantic[1:n, 1:n]
+#sim_transactional[1:n, 1:n]
+
+vsim_semantic = sim_semantic[lower.tri(sim_semantic)] %>% as.vector()
+vsim_transactional = sim_transactional[lower.tri(sim_transactional)] %>% as.vector()
+
+n = 2000
+x = vsim_semantic[1:n]
+y = vsim_transactional[1:n]
+cor(x, y)
+
+data.frame(semantic=x, transactional=y) %>% 
+ggplot(aes(semantic, transactional)) + geom_point()
+
+cor( vsim_semantic, vsim_transactional )
+
+```
+
+
+
+## 5. Fused Embeddings
+
+```{python message=FALSE, warning=FALSE}
+
+```
+
+```{python message=FALSE, warning=FALSE}
+#norm_embeddings_transactional = normalize_embeddings(embeddings_transactional)
+#embeddings = np.column_stack((norm_embeddings_semantic, norm_embeddings_transactional))
+#embeddings = norm_embeddings_semantic
+#embeddings.shape
+```
+
+## 6. Similarity Quantification
+
+
+```{python message=FALSE, warning=FALSE}
+sim = cosine_similarity(embeddings, embeddings)
+#sim = (sim - np.min(sim) ) / ( 1 - np.min(sim) )
+#sim = np.clip(sim, a_min=0, a_max=1)
+
+distance = 1 - sim
+
+from scipy.spatial.distance import squareform
+condensed_distance = squareform(distance, checks=False)
+
+from scipy.cluster.hierarchy import linkage, dendrogram
+
+Z = linkage(condensed_distance, method='average')  # or 'average', 'complete', etc.
+Z = np.clip(Z, a_min=0, a_max=None)
+```
+
+```{python message=FALSE, warning=FALSE}
+
+def compute_homogeneity(indices, similarity_matrix):
+    similarity_submatrix = similarity_matrix[np.ix_(indices, indices)]
+    homogeneity = np.min( similarity_submatrix )
+    return float(homogeneity)
+
+def collect_leaf_indices(node):
+    if node.is_leaf():
+        return [node.id]
+    else:
+        return collect_leaf_indices(node.left) + collect_leaf_indices(node.right)
+
+def build_tree(node, labels, similarity_matrix):
+    """ 
+    """
+
+    if node.is_leaf():
+        return [node.id], { # , 
+            "name": f"{labels[node.id]}",
+            "homogeneity": 0.0  # Leaves have no homogeneity
+        }
+
+    else:
+        left_leaves, left_branch = build_tree(node.left, labels, similarity_matrix)
+        right_leaves, right_branch = build_tree(node.right, labels, similarity_matrix)
+        leaves = left_leaves + right_leaves
+        
+        homogeneity = compute_homogeneity(leaves, similarity_matrix)
+        if not left_branch["homogeneity"]:
+            left_branch["homogeneity"] = homogeneity
+
+        if not right_branch["homogeneity"]:
+            right_branch["homogeneity"] = homogeneity
+
+        return leaves, { 
+            "name": f"[{round(100*homogeneity)}]", # "", # or str(node.id)
+            "homogeneity": homogeneity,  # Proxy: deeper == more homogeneous
+            "children": [ left_branch, right_branch ]
+        }
+
+
+scaled_sim = ( sim - np.min(sim) ) / ( 1 - np.min(np.min(sim)) )
+
+root_node = to_tree(Z)
+#x = root_node.right.right.right.left.right
+leaves, tree_json = build_tree(root_node, description, sim)
+#print("---")
+#print(leaves)
+#print(tree_json)
+
+with open('tree.json', 'w') as f:
+    json.dump(tree_json, f)
+```
+
+
+## Repository
+
+All data and source code are available here: 👉 <https://github.com/plogacev/case_studies/tree/main/product_similarity>
