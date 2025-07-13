@@ -32,10 +32,10 @@ editor: visual
 
 **Two-stage price distribution elicitation pipeline using GhatGPT.** Demonstrates a two-stage pipeline that uses large language models (LLMs) to elicit reasonable price distributions for consumer products when competitor pricing data is insufficient or historical sales data is sparse. It extracts structured product attributes from free-text titles and descriptions (via GPT-3.5-turbo), then uses GPT-4o to elicit a retail price range (minimum, typical, maximum) based on those attributes and regional context. The elicited price ranges are used to reverse-engineer log-normal distribution parameters, which are validated against actual prices scraped from Mercado Libre. The result is a calibrated, probabilistic estimate of product pricing grounded in LLM-elicited knowledge.
 
-🔗 [Project Documentation + Code](pricedist_elicitation)
+🔗 [Project Documentation + Code](pricedist_elicitation/price_distribution_elicitation.html)
 
 ## 4. A Hidden-Markov Model of Stockout Detection
 
 **Bayesian Hidden Markov Model for detecting stockouts in sales data with no explicit inventory information.** A synthetic dataset is generated with steady latent demand and known stockout periods to demonstrate the principle. Realized sales are treated as true demand realizations except during stockouts, which structurally force sales to zero and hide actual demand. The model treats sales as emissions from two hidden states - regular sales and stockout - with state transitions governed by a Markov process. Inference is performed in Stan using MAP estimation and the Viterbi algorithm to recover the most likely stockout periods. The result shows how probabilistic state-switching can uncover unobserved stockouts that distort sales data.
 
-🔗 [Project Documentation + Code](stockouts)
+🔗 [Project Documentation + Code](stockouts/stockouts.html)

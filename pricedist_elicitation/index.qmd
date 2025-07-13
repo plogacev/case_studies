@@ -20,4 +20,4 @@ Demonstrates a two-stage pipeline that uses large language models (LLMs) to elic
 
 ## 1. Implementation with ChatGPT
 
-\[[Notebook](./price_distribution_elicitation.html)\]
+🔗 \[[Notebook](./price_distribution_elicitation.html)\]

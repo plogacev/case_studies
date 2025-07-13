@@ -141,12 +141,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="price-distribution-elicitation-from-an-llm" class="level2">
 <h2 class="anchored" data-anchor-id="price-distribution-elicitation-from-an-llm">3. Price Distribution Elicitation from an LLM</h2>
 <p><strong>Two-stage price distribution elicitation pipeline using GhatGPT.</strong> Demonstrates a two-stage pipeline that uses large language models (LLMs) to elicit reasonable price distributions for consumer products when competitor pricing data is insufficient or historical sales data is sparse. It extracts structured product attributes from free-text titles and descriptions (via GPT-3.5-turbo), then uses GPT-4o to elicit a retail price range (minimum, typical, maximum) based on those attributes and regional context. The elicited price ranges are used to reverse-engineer log-normal distribution parameters, which are validated against actual prices scraped from Mercado Libre. The result is a calibrated, probabilistic estimate of product pricing grounded in LLM-elicited knowledge.</p>
-<p>🔗 <a href="pricedist_elicitation">Project Documentation + Code</a></p>
+<p>🔗 <a href="pricedist_elicitation/price_distribution_elicitation.html">Project Documentation + Code</a></p>
 </section>
 <section id="a-hidden-markov-model-of-stockout-detection" class="level2">
 <h2 class="anchored" data-anchor-id="a-hidden-markov-model-of-stockout-detection">4. A Hidden-Markov Model of Stockout Detection</h2>
 <p><strong>Bayesian Hidden Markov Model for detecting stockouts in sales data with no explicit inventory information.</strong> A synthetic dataset is generated with steady latent demand and known stockout periods to demonstrate the principle. Realized sales are treated as true demand realizations except during stockouts, which structurally force sales to zero and hide actual demand. The model treats sales as emissions from two hidden states - regular sales and stockout - with state transitions governed by a Markov process. Inference is performed in Stan using MAP estimation and the Viterbi algorithm to recover the most likely stockout periods. The result shows how probabilistic state-switching can uncover unobserved stockouts that distort sales data.</p>
-<p>🔗 <a href="stockouts">Project Documentation + Code</a></p>
+<p>🔗 <a href="stockouts/stockouts.html">Project Documentation + Code</a></p>
 <!-- -->
 
 </section>
@@ -659,13 +659,13 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 <span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>**Two-stage price distribution elicitation pipeline using GhatGPT.** Demonstrates a two-stage pipeline that uses large language models (LLMs) to elicit reasonable price distributions for consumer products when competitor pricing data is insufficient or historical sales data is sparse. It extracts structured product attributes from free-text titles and descriptions (via GPT-3.5-turbo), then uses GPT-4o to elicit a retail price range (minimum, typical, maximum) based on those attributes and regional context. The elicited price ranges are used to reverse-engineer log-normal distribution parameters, which are validated against actual prices scraped from Mercado Libre. The result is a calibrated, probabilistic estimate of product pricing grounded in LLM-elicited knowledge.</span>
 <span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>🔗 <span class="co">[</span><span class="ot">Project Documentation + Code</span><span class="co">](pricedist_elicitation)</span></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>🔗 <span class="co">[</span><span class="ot">Project Documentation + Code</span><span class="co">](pricedist_elicitation/price_distribution_elicitation.html)</span></span>
 <span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a><span class="fu">## 4. A Hidden-Markov Model of Stockout Detection</span></span>
 <span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>**Bayesian Hidden Markov Model for detecting stockouts in sales data with no explicit inventory information.** A synthetic dataset is generated with steady latent demand and known stockout periods to demonstrate the principle. Realized sales are treated as true demand realizations except during stockouts, which structurally force sales to zero and hide actual demand. The model treats sales as emissions from two hidden states - regular sales and stockout - with state transitions governed by a Markov process. Inference is performed in Stan using MAP estimation and the Viterbi algorithm to recover the most likely stockout periods. The result shows how probabilistic state-switching can uncover unobserved stockouts that distort sales data.</span>
 <span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>🔗 <span class="co">[</span><span class="ot">Project Documentation + Code</span><span class="co">](stockouts)</span></span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>🔗 <span class="co">[</span><span class="ot">Project Documentation + Code</span><span class="co">](stockouts/stockouts.html)</span></span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->
 
