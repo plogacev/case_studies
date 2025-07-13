@@ -19,36 +19,23 @@ source("./source/greedy_cp_selection.r")
 Rcpp::sourceCpp("./source/greedy_cp_selection.cpp")
 ```
 
-
 ## Summary
 
-This notebook demonstrates a Bayesian changepoint detection algorithm for histogram-valued time series.
-It is based on a greedy search tailored for transactional price data with varying pricing regimes.
+This notebook demonstrates a Bayesian changepoint detection algorithm for histogram-valued time series. It is based on a greedy search tailored for transactional price data with varying pricing regimes.
 
 -   Each day's price distribution is modeled via discretized histograms.
 -   The changepoint configuration is selected via greedy MAP estimation.
 -   In the future, parameters may be obtained by means of sampling instead of greedy search. (For instance, using RcppSMC or a custom sampler, e.g., MH).
 
-
 ## Modeling Approach
 
-We model the price distribution of a product as a histogram over discrete price points, because in B2C scenarios, 
-only a few specifc prices are available at any given time. Some customer groups may be offered a discount, while most purchase at the list price.
-Modeling daily means or medians may lose the multimodal structure that matters most for detecting pricing regimes. 
-Histogram-valued preserve the full distributional shape, making it possible to detect subtle regime shifts such as list price changes or availability of discounts.
-The method is useful for detecting changes in pricing regimes,  such as list price changes, promotions, or changes in the availability of discounts.
+We model the price distribution of a product as a histogram over discrete price points, because in B2C scenarios, only a few specifc prices are available at any given time. Some customer groups may be offered a discount, while most purchase at the list price. Modeling daily means or medians may lose the multimodal structure that matters most for detecting pricing regimes. Histogram-valued preserve the full distributional shape, making it possible to detect subtle regime shifts such as list price changes or availability of discounts. The method is useful for detecting changes in pricing regimes, such as list price changes, promotions, or changes in the availability of discounts.
 
-Each day is represented by a histogram over discrete price points. The time series is transformed into a histogram-valued sequence, 
-represented as a matrix of counts.
-We assume that pricing follows distinct *pricing regimes*, each associated with a different price distribution.
-Changes in pricing regime occur when  the pricing of a product undergoes a meaningful change — such as list price changes, promotions, or changes in the availability of discounts.
-Changepoints are defined as time indices where the underlying price distribution regime changes, leading to a change in relative frequency of price points.
-
+Each day is represented by a histogram over discrete price points. The time series is transformed into a histogram-valued sequence, represented as a matrix of counts. We assume that pricing follows distinct *pricing regimes*, each associated with a different price distribution. Changes in pricing regime occur when the pricing of a product undergoes a meaningful change — such as list price changes, promotions, or changes in the availability of discounts. Changepoints are defined as time indices where the underlying price distribution regime changes, leading to a change in relative frequency of price points.
 
 ### Data Format
 
-The synthetic data used in this notebook simulates 800 days of pricing activity, segmented into 10 regimes characterized by 
-different list prices, discounts, and discount availability
+The synthetic data used in this notebook simulates 800 days of pricing activity, segmented into 10 regimes characterized by different list prices, discounts, and discount availability
 
 ```{r}
 set.seed(123)
@@ -69,8 +56,6 @@ actual_changepoints <- segments$start_day[-1]-0.5
 knitr::kable(segments, caption = "Price Regimes Overview")
 ```
 
-
-
 The plot below shows the synthetic data set, with the actual changepoints marked with dashed vertical lines. This is the dataset we'll use to test the segmentation algorithm.
 
 ```{r fig.height=3, fig.width=10}
@@ -87,19 +72,15 @@ print(p_price)
 
 #### Segmentation
 
-We define a segmentation of a histogram-valued time series $h$ of length $T$ as a vector $z \in \{0, 1\}^{T-1}$, where $z_t=1$ indicates
-a changepoint between indices $t$ and $t+1$, and $0$ indicates its absence.
-From the index vector $z$, we can derive a segmentation in the form of $\mathcal{S}(z)$, i.e., a set of all segment intervals $[t_1, t_2]$.
+We define a segmentation of a histogram-valued time series $h$ of length $T$ as a vector $z \in \{0, 1\}^{T-1}$, where $z_t=1$ indicates a changepoint between indices $t$ and $t+1$, and $0$ indicates its absence. From the index vector $z$, we can derive a segmentation in the form of $\mathcal{S}(z)$, i.e., a set of all segment intervals $[t_1, t_2]$.
 
-The model is intended to select a segmentation $z$ that best balances *(i)* goodness-of-fit (how well the empirical histograms are explained within segments) with *(ii)* model simplicity (how many changepoints are included). 
-The balance is governed by the regularizing parameter $\lambda$, which is selected by optimizing the posterior likelihood over it.
+The model is intended to select a segmentation $z$ that best balances *(i)* goodness-of-fit (how well the empirical histograms are explained within segments) with *(ii)* model simplicity (how many changepoints are included). The balance is governed by the regularizing parameter $\lambda$, which is selected by optimizing the posterior likelihood over it.
 
 The posterior over a changepoint configurations $z$ is assumed to be:
 
 $$
 p(z \mid \mathbf{n}, \lambda) \propto p(\mathbf{n} \mid z) \cdot p(z) \cdot p(\lambda)
 $$
-
 
 ### Likelihood
 
@@ -109,15 +90,15 @@ $$
 p(\mathbf{n} \mid z) = \prod_{(t_1, t_2) \in \mathcal{S}(z)} p(\mathbf{n}_{[t_1, t_2]})\text{,}
 $$
 
+```{=html}
 <!--
 $$
 \mathbf{n_{[t_1, t_2]}} = \sum_{t = t_1}^{t_2} \mathbf{h}_t
 $$
 -->
+```
 
-The likelihood of a segment $\mathbf{n}_{[t_1, t_2]}$ is set to it (regularized) maximum likelihood estimate ... (explain more) ..., where $\hat{p}_i$ is the (regularized) maximum likelihood estimate of the relative frequencies of the different price points.
-This corresponds to using the **maximum likelihood estimate** of the multinomial probabilities within each segment. Although technically this is not fully Bayesian (since we're not integrating over latent parameters), it can be viewed as an empirical Bayes approximation.
-
+The likelihood of a segment $\mathbf{n}_{[t_1, t_2]}$ is set to it (regularized) maximum likelihood estimate ... (explain more) ..., where $\hat{p}_i$ is the (regularized) maximum likelihood estimate of the relative frequencies of the different price points. This corresponds to using the **maximum likelihood estimate** of the multinomial probabilities within each segment. Although technically this is not fully Bayesian (since we're not integrating over latent parameters), it can be viewed as an empirical Bayes approximation.
 
 $$
 p(\mathbf{n}_{[t_1, t_2]}) = \sum_{i=1}^{K} (\hat{p}_i)^{n_i}
@@ -129,16 +110,13 @@ $$
 \hat{p}_i = \frac{n_i + \epsilon}{\sum_j (n_j + \epsilon)}
 $$
 
-
 ### Prior
 
-We place a Bernoulli prior on each potential changepoint, to penalize excessive complexity: small $\lambda$ values encourage fewer changepoints, favoring parsimony.
-In consequence, the model selects the segmentation $z$ that best balances goodness-of-fit (how well the empirical histograms are explained within segments) with model simplicity (how many changepoints are included). The balance is governed by $\lambda$.
+We place a Bernoulli prior on each potential changepoint, to penalize excessive complexity: small $\lambda$ values encourage fewer changepoints, favoring parsimony. In consequence, the model selects the segmentation $z$ that best balances goodness-of-fit (how well the empirical histograms are explained within segments) with model simplicity (how many changepoints are included). The balance is governed by $\lambda$.
 
 $$
 z_t \sim \text{Bernoulli}(\lambda)
 $$
-
 
 ## Estimation
 
@@ -158,10 +136,9 @@ This project implements a greedy changepoint detection algorithm for time series
 -   A transformation step that maps transactional data into a histogram matrix (`compute_price_histogram()`).
 -   A C++ backend that performs fast log-likelihood evaluation and greedy changepoint selection via Rcpp.
 
-
 ## Changepoint Detection Results
 
-In the present example, the algorithm detects the same number changepoints, and the estimates ones, are largely fairly close to the simulated ones. A formal evaluation is pending. It stands to reason that the accuracy of changepoint identification will depend on the similarity between adjacent segments, as well as segment length. 
+In the present example, the algorithm detects the same number changepoints, and the estimates ones, are largely fairly close to the simulated ones. A formal evaluation is pending. It stands to reason that the accuracy of changepoint identification will depend on the similarity between adjacent segments, as well as segment length.
 
 ```{r }
 opt_res <- locate_optimal_changepoints( hist$histogram, max_lambda = 0.3 )
@@ -169,7 +146,6 @@ detected_changepoints <- which(opt_res$changepoints) - 0.5
 
 knitr::kable(t(actual_changepoints), caption = "Original Changepoints")
 knitr::kable(t(detected_changepoints), caption = "Detected Changepoints")
-
 
 ```
 
@@ -185,18 +161,15 @@ p_price +
 ```
 
 ## Limitations
-- The algorithm is designed to detect even small changes in average price if they are sufficiently frequent.
-- In the present version, it cannot deal with days with no sales, and may possibly identify them as a new pricing regime, 
-thus zero-sales days have to be excluded before running it.  
-- The algorithm is not designed to deal with overlapping price regimes.
 
+-   The algorithm is designed to detect even small changes in average price if they are sufficiently frequent.
+-   In the present version, it cannot deal with days with no sales, and may possibly identify them as a new pricing regime, thus zero-sales days have to be excluded before running it.
+-   The algorithm is not designed to deal with overlapping price regimes.
 
 ## Repository
 
 All source code is available here:\
 👉 <https://github.com/plogacev/case_studies/tree/main/pricedist_changepoints>
-
-
 
 ```{=html}
 <pre><code class="language-cpp">
