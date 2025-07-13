@@ -20,4 +20,4 @@ Bayesian Hidden Markov Model for detecting stockouts in sales data with no expli
 
 ## 1. Simple HMM
 
-🔗 \[[Notebook](./price_distribution_elicitation.html)\]
+🔗 \[[Notebook](./stockouts.html)\]
