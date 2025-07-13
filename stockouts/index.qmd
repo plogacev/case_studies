@@ -1,0 +1,23 @@
+---
+title: "A Hidden-Markov Model of Stockout Detection"
+author:
+  name: "Pavel Logačev"
+  email: "pavel@example.com"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+## Summary
+
+Bayesian Hidden Markov Model for detecting stockouts in sales data with no explicit inventory information. A synthetic dataset is generated with steady latent demand and known stockout periods to demonstrate the principle. Realized sales are treated as true demand realizations except during stockouts, which structurally force sales to zero and hide actual demand. The model treats sales as emissions from two hidden states - regular sales and stockout - with state transitions governed by a Markov process. Inference is performed in Stan using MAP estimation and the Viterbi algorithm to recover the most likely stockout periods. The result shows how probabilistic state-switching can uncover unobserved stockouts that distort sales data.
+
+## 1. Simple HMM
+
+🔗 \[[Notebook](./price_distribution_elicitation.html)\]
