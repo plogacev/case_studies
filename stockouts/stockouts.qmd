@@ -12,10 +12,6 @@ engine: knitr
 editor: visual
 ---
 
-## Initialization
-
-In this section, we load the libraries we need, and defined the data-generation logic.
-
 ```{r warning=FALSE, message=FALSE}
 #library(dotenv)
 #library(digest)
@@ -55,8 +51,7 @@ generate_data <- function(n_days, lambda_base, stockouts_idx, seed = 12)
 
 ## Summary
 
-...
-
+This notebook demonstrates how to detect hidden stockouts in sales data when no explicit inventory records are available. Using a synthetic dataset with steady latent demand and known stockout periods, it shows how realized sales can drop to zero during stockouts, masking the true demand signal. A Bayesian Hidden Markov Model treats daily sales as emissions from two hidden states — regular sales and stockout — with transitions governed by a Markov process. Inference is performed in Stan using MAP estimation and the Viterbi algorithm to recover the most likely stockout periods. The approach illustrates how probabilistic state-switching can identify unobserved stockouts that distort sales-based analyses.
 
 ## Introduction
 
