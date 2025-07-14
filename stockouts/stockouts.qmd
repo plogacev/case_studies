@@ -251,3 +251,4 @@ df %>% ggplot(aes(day, sales, group=1, color = state)) +
 # Limitations
 
 - The current model does not implement seasonality, yearly or weekly.
+- It does not account for the fact that unusual spikes in demand are more likely to be followed by stockouts than below-average sales.

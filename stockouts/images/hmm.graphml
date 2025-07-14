@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--Created by yFiles for HTML 3.0.0.2-->
+<graphml xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://www.yworks.com/xml/schema/graphml.html/2.0/ygraphml.xsd " xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:yca="http://www.yworks.com/xml/yfiles-compat-arrows/1.0" xmlns:ycns="http://www.yworks.com/xml/yfiles-compat-node-styles/1.0" xmlns:yjs2="http://www.yworks.com/xml/yfiles-for-html/2.0/xaml" xmlns:template-styles="http://www.yworks.com/demos/template-node-style/3.0" xmlns:demostyle2="http://www.yworks.com/yFilesHTML/demos/FlatDemoStyle/2.0" xmlns:demostyle="http://www.yworks.com/yFilesHTML/demos/FlatDemoStyle/1.0" xmlns:icon-style="http://www.yworks.com/yed-live/icon-style/1.0" xmlns:bpmn="http://www.yworks.com/xml/yfiles-bpmn/2.0" xmlns:demotablestyle="http://www.yworks.com/yFilesHTML/demos/FlatDemoTableStyle/1.0" xmlns:uml="http://www.yworks.com/yFilesHTML/demos/UMLDemoStyle/1.0" xmlns:GraphvizNodeStyle="http://www.yworks.com/yFilesHTML/graphviz-node-style/1.0" xmlns:Vue3jsNodeStyle="http://www.yworks.com/demos/yfiles-vue-node-style/3.0" xmlns:explorer-style="http://www.yworks.com/data-explorer/1.0" xmlns:yx="http://www.yworks.com/xml/yfiles-common/4.0" xmlns:y="http://www.yworks.com/xml/yfiles-common/3.0" xmlns:x="http://www.yworks.com/xml/yfiles-common/markup/3.0" xmlns:yjs="http://www.yworks.com/xml/yfiles-for-html/3.0/xaml" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<key id="d0" for="node" attr.type="int" attr.name="zOrder" y:attr.uri="http://www.yworks.com/xml/yfiles-z-order/1.0/zOrder"/>
+	<key id="d1" for="node" attr.type="boolean" attr.name="Expanded" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/folding/Expanded">
+		<default>true</default>
+	</key>
+	<key id="d2" for="node" attr.type="string" attr.name="url"/>
+	<key id="d3" for="node" attr.type="string" attr.name="description"/>
+	<key id="d4" for="node" attr.name="NodeLabels" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/NodeLabels"/>
+	<key id="d5" for="node" attr.name="NodeGeometry" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/NodeGeometry"/>
+	<key id="d6" for="all" attr.name="UserTags" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/UserTags"/>
+	<key id="d7" for="node" attr.name="NodeStyle" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/NodeStyle"/>
+	<key id="d8" for="node" attr.name="NodeViewState" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/folding/1.1/NodeViewState"/>
+	<key id="d9" for="edge" attr.type="string" attr.name="url"/>
+	<key id="d10" for="edge" attr.type="string" attr.name="description"/>
+	<key id="d11" for="edge" attr.name="EdgeLabels" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/EdgeLabels"/>
+	<key id="d12" for="edge" attr.name="EdgeGeometry" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/EdgeGeometry"/>
+	<key id="d13" for="edge" attr.name="EdgeStyle" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/EdgeStyle"/>
+	<key id="d14" for="edge" attr.name="EdgeViewState" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/folding/1.1/EdgeViewState"/>
+	<key id="d15" for="port" attr.name="PortLabels" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/PortLabels"/>
+	<key id="d16" for="port" attr.name="PortLocationParameter" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/PortLocationParameter">
+		<default>
+			<x:Static Member="y:FreeNodePortLocationModel.NodeCenterAnchored"/>
+		</default>
+	</key>
+	<key id="d17" for="port" attr.name="PortStyle" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/PortStyle">
+		<default>
+			<x:Static Member="y:VoidPortStyle.Instance"/>
+		</default>
+	</key>
+	<key id="d18" for="port" attr.name="PortViewState" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/folding/1.1/PortViewState"/>
+	<key id="d19" attr.name="SharedData" y:attr.uri="http://www.yworks.com/xml/yfiles-common/2.0/SharedData"/>
+	<data key="d19">
+		<y:SharedData>
+			<yjs:Font x:Key="1" fontSize="12" lineSpacing="0.2"/>
+			<yx:SmartEdgeLabelModel x:Key="2"/>
+			<yjs:Font x:Key="3" fontSize="12" fontFamily="Roboto" lineSpacing="0.2"/>
+			<yx:SmartEdgeLabelModel x:Key="4" Angle="1.5707963267948966"/>
+			<yjs:LabelStyle x:Key="5" verticalTextAlignment="CENTER" horizontalTextAlignment="CENTER" font="{y:GraphMLReference 1}">
+				<yjs:LabelStyle.textFill>
+					<yjs:CssFill cssString="black"/>
+				</yjs:LabelStyle.textFill>
+			</yjs:LabelStyle>
+		</y:SharedData>
+	</data>
+	<graph id="G" edgedefault="directed">
+		<data key="d6">
+			<y:Json>{"version":"2.0.0","origin":"yed-live","theme":{"name":"light","version":"1.0.0"}}</y:Json>
+		</data>
+		<node id="n0">
+			<data key="d0">1</data>
+			<data key="d4">
+				<x:List>
+					<y:Label Text="Stockout" LayoutParameter="{x:Static yx:InteriorNodeLabelModel.Center}">
+						<y:Label.Style>
+							<yjs:LabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 1}"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d5">
+				<y:RectD X="223.015" Y="114.48202020795623" Width="76.78" Height="50"/>
+			</data>
+			<data key="d7">
+				<GraphvizNodeStyle:GraphvizNodeStyle shape="circle"/>
+			</data>
+			<port name="p0">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.27857951775833945,0.5"/>
+				</data>
+			</port>
+			<port name="p1">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.4999999999999999,0"/>
+				</data>
+			</port>
+			<port name="p2">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.33282355993049556,0.824518971899626"/>
+				</data>
+			</port>
+			<port name="p3">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.4999999999999999,1"/>
+				</data>
+			</port>
+			<port name="p4">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.667176440069504,0.824518971899626"/>
+				</data>
+			</port>
+			<port name="p5">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.1826605737496827,0.5"/>
+				</data>
+			</port>
+			<port name="p6"/>
+			<port name="p7">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.1826605737496827,0.5"/>
+				</data>
+			</port>
+			<port name="p8">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.8173394262503174,0.5"/>
+				</data>
+			</port>
+			<port name="p9">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.8173394262503174,0.5"/>
+				</data>
+			</port>
+		</node>
+		<node id="n1">
+			<data key="d0">2</data>
+			<data key="d4">
+				<x:List>
+					<y:Label LayoutParameter="{x:Static yx:InteriorNodeLabelModel.Center}">
+						<y:Label.Text><![CDATA[Regular
+Sales]]></y:Label.Text>
+						<y:Label.Style>
+							<yjs:LabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 1}"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d5">
+				<y:RectD X="41.61838167159064" Y="114.48202020795623" Width="85.09871152906692" Height="50"/>
+			</data>
+			<data key="d7">
+				<GraphvizNodeStyle:GraphvizNodeStyle shape="circle"/>
+			</data>
+			<port name="p0">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.26421215248560476,0.5"/>
+				</data>
+			</port>
+			<port name="p1">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.326643579675603,0.16348459584087624"/>
+				</data>
+			</port>
+			<port name="p2">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.5,0"/>
+				</data>
+			</port>
+			<port name="p3">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.673356420324397,0.16348459584087624"/>
+				</data>
+			</port>
+			<port name="p4">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.5,1"/>
+				</data>
+			</port>
+			<port name="p5">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.5,0.019230769230769218"/>
+				</data>
+			</port>
+			<port name="p6">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.7870306524759199,0.5"/>
+				</data>
+			</port>
+			<port name="p7">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.7870306524759199,0.5"/>
+				</data>
+			</port>
+			<port name="p8">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.21296934752408014,0.5"/>
+				</data>
+			</port>
+			<port name="p9">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.5,0.019230769230769218"/>
+				</data>
+			</port>
+		</node>
+		<node id="n2">
+			<data key="d0">3</data>
+			<data key="d4">
+				<x:List>
+					<y:Label Text="0" LayoutParameter="{x:Static yx:InteriorNodeLabelModel.Center}">
+						<y:Label.Style>
+							<yjs:LabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 1}"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d5">
+				<y:RectD X="232.43004427210548" Y="200.8125" Width="57.949911455788964" Height="15.5"/>
+			</data>
+			<data key="d7">
+				<GraphvizNodeStyle:GraphvizNodeStyle shape="box"/>
+			</data>
+			<port name="p0">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.5000000000000002,0"/>
+				</data>
+			</port>
+		</node>
+		<node id="n3">
+			<data key="d0">4</data>
+			<data key="d5">
+				<y:RectD X="39.1677374361241" Y="200.8125" Width="90" Height="50"/>
+			</data>
+			<data key="d7">
+				<GraphvizNodeStyle:GraphvizNodeStyle shape="box"/>
+			</data>
+			<port name="p0">
+				<data key="d16">
+					<y:FreeNodePortLocationModelParameter Ratio="0.5,0"/>
+				</data>
+			</port>
+		</node>
+		<edge id="e0" source="n0" target="n0" sourceport="p0" targetport="p9">
+			<data key="d11">
+				<x:List>
+					<y:Label Text="&lt;p&gt;π&lt;sub&gt;SS&lt;/sub&gt;​​&lt;/p&gt;">
+						<y:Label.LayoutParameter>
+							<yx:SmartEdgeLabelModelParameter Model="{y:GraphMLReference 2}" SegmentIndex="1" SegmentRatio="0.48817117450769254" Distance="4.47768959725671"/>
+						</y:Label.LayoutParameter>
+						<y:Label.Style>
+							<yjs:MarkupLabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 3}"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d12">
+				<x:List>
+					<y:Bend Location="285.125,139.48202020795623"/>
+					<y:Bend Location="369.1875,160"/>
+					<y:Bend Location="332.8125,91.875"/>
+				</x:List>
+			</data>
+			<data key="d13">
+				<yjs:PolylineEdgeStyle smoothingLength="100">
+					<yjs:PolylineEdgeStyle.stroke>
+						<yjs:Stroke>
+							<yjs:Stroke.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Stroke.fill>
+						</yjs:Stroke>
+					</yjs:PolylineEdgeStyle.stroke>
+					<yjs:PolylineEdgeStyle.targetArrow>
+						<yjs:Arrow>
+							<yjs:Arrow.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Arrow.fill>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.targetArrow>
+					<yjs:PolylineEdgeStyle.sourceArrow>
+						<yjs:Arrow type="NONE">
+							<yjs:Arrow.stroke>
+								<yjs:Stroke lineCap="SQUARE">
+									<yjs:Stroke.fill>
+										<yjs:CssFill cssString="black"/>
+									</yjs:Stroke.fill>
+								</yjs:Stroke>
+							</yjs:Arrow.stroke>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.sourceArrow>
+				</yjs:PolylineEdgeStyle>
+			</data>
+		</edge>
+		<edge id="e1" source="n1" target="n1" sourceport="p0" targetport="p8">
+			<data key="d11">
+				<x:List>
+					<y:Label Text="&lt;p&gt;π&lt;sub&gt;RR&lt;/sub&gt;&lt;/p&gt;">
+						<y:Label.LayoutParameter>
+							<yx:SmartEdgeLabelModelParameter Model="{y:GraphMLReference 2}" SegmentIndex="1" SegmentRatio="0.544266889739694" Distance="-4.534310178518384"/>
+						</y:Label.LayoutParameter>
+						<y:Label.Style>
+							<yjs:MarkupLabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 3}"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d12">
+				<x:List>
+					<y:Bend Location="-28.708949071812413,155.6070202079562"/>
+					<y:Bend Location="11.259800928187587,87.0132702079562"/>
+				</x:List>
+			</data>
+			<data key="d13">
+				<yjs:PolylineEdgeStyle smoothingLength="100">
+					<yjs:PolylineEdgeStyle.stroke>
+						<yjs:Stroke>
+							<yjs:Stroke.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Stroke.fill>
+						</yjs:Stroke>
+					</yjs:PolylineEdgeStyle.stroke>
+					<yjs:PolylineEdgeStyle.targetArrow>
+						<yjs:Arrow>
+							<yjs:Arrow.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Arrow.fill>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.targetArrow>
+					<yjs:PolylineEdgeStyle.sourceArrow>
+						<yjs:Arrow type="NONE">
+							<yjs:Arrow.stroke>
+								<yjs:Stroke lineCap="SQUARE">
+									<yjs:Stroke.fill>
+										<yjs:CssFill cssString="black"/>
+									</yjs:Stroke.fill>
+								</yjs:Stroke>
+							</yjs:Arrow.stroke>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.sourceArrow>
+				</yjs:PolylineEdgeStyle>
+			</data>
+		</edge>
+		<edge id="e2" source="n0" target="n1" sourceport="p7" targetport="p6">
+			<data key="d11">
+				<x:List>
+					<y:Label Text="&lt;p&gt;1-π&lt;sub&gt;SS&lt;/sub&gt;​​&lt;/p&gt;">
+						<y:Label.LayoutParameter>
+							<yx:FreeEdgeLabelModelParameter Ratio="0.47956339672402953" Distance="-18.875"/>
+						</y:Label.LayoutParameter>
+						<y:Label.Style>
+							<yjs:MarkupLabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 3}" minimumSize="44.10954631344044,0" maximumSize="44.10954631344044,Infinity"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d12">
+				<x:List>
+					<y:Bend Location="173.3125,158.5625"/>
+				</x:List>
+			</data>
+			<data key="d13">
+				<yjs:PolylineEdgeStyle smoothingLength="100">
+					<yjs:PolylineEdgeStyle.stroke>
+						<yjs:Stroke>
+							<yjs:Stroke.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Stroke.fill>
+						</yjs:Stroke>
+					</yjs:PolylineEdgeStyle.stroke>
+					<yjs:PolylineEdgeStyle.targetArrow>
+						<yjs:Arrow>
+							<yjs:Arrow.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Arrow.fill>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.targetArrow>
+					<yjs:PolylineEdgeStyle.sourceArrow>
+						<yjs:Arrow type="NONE">
+							<yjs:Arrow.stroke>
+								<yjs:Stroke lineCap="SQUARE">
+									<yjs:Stroke.fill>
+										<yjs:CssFill cssString="black"/>
+									</yjs:Stroke.fill>
+								</yjs:Stroke>
+							</yjs:Arrow.stroke>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.sourceArrow>
+				</yjs:PolylineEdgeStyle>
+			</data>
+		</edge>
+		<edge id="e3" source="n1" target="n0" sourceport="p7" targetport="p5">
+			<data key="d11">
+				<x:List>
+					<y:Label Text="&lt;p&gt;1-π&lt;sub&gt;RR&lt;/sub&gt;​​&lt;/p&gt;">
+						<y:Label.LayoutParameter>
+							<yx:FreeEdgeLabelModelParameter Ratio="0.5038926863382802" Distance="-22"/>
+						</y:Label.LayoutParameter>
+						<y:Label.Style>
+							<yjs:MarkupLabelStyle horizontalTextAlignment="CENTER" font="{y:GraphMLReference 3}" minimumSize="49.13653021380641,0" maximumSize="49.13653021380641,Infinity"/>
+						</y:Label.Style>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d12">
+				<x:List>
+					<y:Bend Location="170.5,122.65625"/>
+				</x:List>
+			</data>
+			<data key="d13">
+				<yjs:PolylineEdgeStyle smoothingLength="100">
+					<yjs:PolylineEdgeStyle.stroke>
+						<yjs:Stroke>
+							<yjs:Stroke.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Stroke.fill>
+						</yjs:Stroke>
+					</yjs:PolylineEdgeStyle.stroke>
+					<yjs:PolylineEdgeStyle.targetArrow>
+						<yjs:Arrow>
+							<yjs:Arrow.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Arrow.fill>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.targetArrow>
+					<yjs:PolylineEdgeStyle.sourceArrow>
+						<yjs:Arrow type="NONE">
+							<yjs:Arrow.stroke>
+								<yjs:Stroke lineCap="SQUARE">
+									<yjs:Stroke.fill>
+										<yjs:CssFill cssString="black"/>
+									</yjs:Stroke.fill>
+								</yjs:Stroke>
+							</yjs:Arrow.stroke>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.sourceArrow>
+				</yjs:PolylineEdgeStyle>
+			</data>
+		</edge>
+		<edge id="e4" source="n0" target="n2" sourceport="p6" targetport="p0">
+			<data key="d11">
+				<x:List>
+					<y:Label Text="sales" Style="{y:GraphMLReference 5}">
+						<y:Label.LayoutParameter>
+							<yx:SmartEdgeLabelModelParameter Model="{y:GraphMLReference 4}" SegmentRatio="0.5417903669748241" Distance="-2.2474592808315492"/>
+						</y:Label.LayoutParameter>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d13">
+				<yjs:PolylineEdgeStyle>
+					<yjs:PolylineEdgeStyle.stroke>
+						<yjs:Stroke>
+							<yjs:Stroke.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Stroke.fill>
+						</yjs:Stroke>
+					</yjs:PolylineEdgeStyle.stroke>
+					<yjs:PolylineEdgeStyle.targetArrow>
+						<yjs:Arrow>
+							<yjs:Arrow.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Arrow.fill>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.targetArrow>
+					<yjs:PolylineEdgeStyle.sourceArrow>
+						<yjs:Arrow type="NONE">
+							<yjs:Arrow.stroke>
+								<yjs:Stroke lineCap="SQUARE">
+									<yjs:Stroke.fill>
+										<yjs:CssFill cssString="black"/>
+									</yjs:Stroke.fill>
+								</yjs:Stroke>
+							</yjs:Arrow.stroke>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.sourceArrow>
+				</yjs:PolylineEdgeStyle>
+			</data>
+		</edge>
+		<edge id="e5" source="n1" target="n3" sourceport="p4" targetport="p0">
+			<data key="d11">
+				<x:List>
+					<y:Label Text="sales" Style="{y:GraphMLReference 5}">
+						<y:Label.LayoutParameter>
+							<yx:SmartEdgeLabelModelParameter Model="{y:GraphMLReference 4}" SegmentRatio="0.5365431580168768" Distance="-2.3125"/>
+						</y:Label.LayoutParameter>
+					</y:Label>
+				</x:List>
+			</data>
+			<data key="d13">
+				<yjs:PolylineEdgeStyle>
+					<yjs:PolylineEdgeStyle.stroke>
+						<yjs:Stroke>
+							<yjs:Stroke.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Stroke.fill>
+						</yjs:Stroke>
+					</yjs:PolylineEdgeStyle.stroke>
+					<yjs:PolylineEdgeStyle.targetArrow>
+						<yjs:Arrow>
+							<yjs:Arrow.fill>
+								<yjs:CssFill cssString="black"/>
+							</yjs:Arrow.fill>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.targetArrow>
+					<yjs:PolylineEdgeStyle.sourceArrow>
+						<yjs:Arrow type="NONE">
+							<yjs:Arrow.stroke>
+								<yjs:Stroke lineCap="SQUARE">
+									<yjs:Stroke.fill>
+										<yjs:CssFill cssString="black"/>
+									</yjs:Stroke.fill>
+								</yjs:Stroke>
+							</yjs:Arrow.stroke>
+						</yjs:Arrow>
+					</yjs:PolylineEdgeStyle.sourceArrow>
+				</yjs:PolylineEdgeStyle>
+			</data>
+		</edge>
+	</graph>
+</graphml>
