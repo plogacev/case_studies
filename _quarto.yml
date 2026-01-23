@@ -1,0 +1,9 @@
+project:
+  type: website
+
+website:
+  title: "Case Studies"
+
+format:
+  html:
+    include-in-header: _includes/google-analytics.html
