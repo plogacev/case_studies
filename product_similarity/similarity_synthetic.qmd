@@ -1,0 +1,896 @@
+---
+title: "Product Similarity Analysis: Synthetic Sports Store Data"
+author: "Pavel Logačev"
+date: "r Sys.Date()"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+```{r}
+library(reticulate)
+library(tidyverse)
+```
+
+
+```{python message=FALSE, warning=FALSE}
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
+import numpy as np
+import pandas as pd
+import polars as pl
+import random
+from collections import defaultdict
+
+import sentence_transformers as st
+from gensim.models import Word2Vec
+
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.decomposition import PCA
+
+from scipy.cluster.hierarchy import linkage, to_tree, fcluster, dendrogram
+from scipy.spatial.distance import squareform
+
+from plotnine import *
+import matplotlib.pyplot as plt
+import json
+import pickle
+
+from joblib import Memory
+
+compute_memory = Memory("./cache", verbose=10)
+
+np.random.seed(42)
+random.seed(42)
+
+import pickle
+from functools import wraps
+from pathlib import Path
+
+def simple_cache(path):
+  path = Path("cache/" + path)
+
+  def decorator(func):
+      @wraps(func)
+      def wrapper(*args, **kwargs):
+          if path.exists():
+            with open(path, "rb") as f:
+              return pickle.load(f)
+                  
+          result = func(*args, **kwargs)
+          path.parent.mkdir(parents=True, exist_ok=True)
+          with open(path, "wb") as f:
+              pickle.dump(result, f)
+
+          return result
+      return wrapper
+  return decorator
+```
+
+## Summary
+
+This notebook demonstrates product similarity analysis using synthetic data from a sports goods store. We create 10 products from two competing brands (Nike and Adidas) with deliberately designed purchasing patterns: complementary products (running shoes with socks, tennis rackets with balls) are frequently bought together, while customers show no brand preference.
+
+We then apply three similarity approaches:
+
+1.  **Semantic similarity** - based on product description embeddings from a sentence transformer
+2.  **Transactional similarity** - based on co-purchase patterns using Word2Vec on transaction baskets
+3.  **Fused similarity** - combining both signals for robust product grouping
+
+The key insight is that semantic and transactional similarity capture fundamentally different relationships: semantic similarity groups products by category (shoes with shoes), while transactional similarity groups products by complementarity (shoes with socks).
+
+## 1. Synthetic Data
+
+### Product Definitions
+
+We create 10 products from two brands (Nike and Adidas) across 5 categories:
+
+-   **Running shoes** (2 products) - complementary with running socks
+-   **Running socks** (2 products) - complementary with running shoes
+-   **Tennis rackets** (2 products) - complementary with tennis balls
+-   **Tennis balls** (2 products) - complementary with tennis rackets
+-   **Sports bags** (2 products) - standalone category
+
+```{python message=FALSE, warning=FALSE}
+products = [
+    # Running category - Nike
+    {"id": "P001", "name": "Nike Air Zoom Running Shoes", "brand": "Nike", "category": "running_shoes",
+     "description": "Nike Air Zoom premium running shoes with responsive cushioning and breathable mesh upper for long distance runners"},
+
+    # Running category - Adidas
+    {"id": "P002", "name": "Adidas Ultraboost Running Shoes", "brand": "Adidas", "category": "running_shoes",
+     "description": "Adidas Ultraboost elite running shoes with energy-returning boost midsole and adaptive knit upper for marathon training"},
+
+    # Running socks - Nike
+    {"id": "P003", "name": "Nike Dri-FIT Running Socks", "brand": "Nike", "category": "running_socks",
+     "description": "Nike Dri-FIT moisture-wicking running socks with arch compression and cushioned heel for athletic performance"},
+
+    # Running socks - Adidas
+    {"id": "P004", "name": "Adidas Climacool Running Socks", "brand": "Adidas", "category": "running_socks",
+     "description": "Adidas Climacool breathable running socks with ventilation zones and padded footbed for jogging and training"},
+
+    # Tennis racket - Nike
+    {"id": "P005", "name": "Nike Court Pro Tennis Racket", "brand": "Nike", "category": "tennis_racket",
+     "description": "Nike Court Pro professional tennis racket with graphite frame and oversized sweet spot for powerful serves"},
+
+    # Tennis racket - Adidas
+    {"id": "P006", "name": "Adidas Barricade Tennis Racket", "brand": "Adidas", "category": "tennis_racket",
+     "description": "Adidas Barricade competition tennis racket with carbon fiber construction and spin-friendly string pattern"},
+
+    # Tennis balls - Nike
+    {"id": "P007", "name": "Nike Championship Tennis Balls", "brand": "Nike", "category": "tennis_balls",
+     "description": "Nike Championship pressurized tennis balls with durable felt cover for consistent bounce on all court surfaces"},
+
+    # Tennis balls - Adidas
+    {"id": "P008", "name": "Adidas Tour Tennis Balls", "brand": "Adidas", "category": "tennis_balls",
+     "description": "Adidas Tour professional tennis balls with premium rubber core for tournament-level play and practice"},
+
+    # Sports bag - Nike
+    {"id": "P009", "name": "Nike Brasilia Sports Bag", "brand": "Nike", "category": "sports_bag",
+     "description": "Nike Brasilia large sports duffel bag with multiple compartments and water-resistant bottom for gym and travel"},
+
+    # Sports bag - Adidas
+    {"id": "P010", "name": "Adidas Team Sports Bag", "brand": "Adidas", "category": "sports_bag",
+     "description": "Adidas Team large sports duffel bag with adjustable shoulder strap and ventilated shoe compartment for athletes"}
+]
+
+products_df = pl.DataFrame(products)
+```
+
+```{r}
+py$products_df$to_pandas()
+```
+
+### Synthetic Transaction Generation
+
+We generate 2000 transactions with the following purchase patterns:
+
+-   **Complementary pairs**: Running shoes + socks (70% co-purchase rate), Tennis rackets + balls (70% co-purchase rate)
+-   **Brand indifference**: When buying complementary items, brand is chosen randomly
+-   **Occasional sports bags**: Added with low probability to transactions
+
+```{python message=FALSE, warning=FALSE}
+
+@compute_memory.cache
+def generate_transactions(n_transactions=2000, seed=42):
+    """
+    Generate synthetic transactions with complementary product patterns.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+
+    running_shoes = ["P001", "P002"]
+    running_socks = ["P003", "P004"]
+    tennis_rackets = ["P005", "P006"]
+    tennis_balls = ["P007", "P008"]
+    sports_bags = ["P009", "P010"]
+
+    transactions = []
+
+    for i in range(n_transactions):
+        transaction = []
+
+        purchase_type = random.choices(
+            ["running", "tennis", "bag_only", "mixed"],
+            weights=[0.35, 0.35, 0.15, 0.15]
+        )[0]
+
+        if purchase_type == "running":
+            transaction.append(random.choice(running_shoes))
+            if random.random() < 0.70:
+                transaction.append(random.choice(running_socks))
+
+        elif purchase_type == "tennis":
+            transaction.append(random.choice(tennis_rackets))
+            if random.random() < 0.70:
+                transaction.append(random.choice(tennis_balls))
+
+        elif purchase_type == "bag_only":
+            transaction.append(random.choice(sports_bags))
+
+        else:
+            all_products = running_shoes + running_socks + tennis_rackets + tennis_balls + sports_bags
+            n_items = random.randint(1, 3)
+            transaction = random.sample(all_products, min(n_items, len(all_products)))
+
+        if purchase_type != "bag_only" and random.random() < 0.10:
+            transaction.append(random.choice(sports_bags))
+
+        transactions.append(transaction)
+
+    return transactions
+```
+
+```{python message=FALSE, warning=FALSE}
+transactions = generate_transactions(n_transactions=2000)
+
+transaction_records = []
+for i, items in enumerate(transactions):
+    for item in items:
+        transaction_records.append({"transaction_id": f"T{i:04d}", "product_id": item})
+
+transactions_df = pl.DataFrame(transaction_records)
+```
+
+```{r}
+(transactions_wide_df <- py$transactions_df$to_pandas() %>% group_by(transaction_id) %>% summarize( basket = paste(product_id, collapse = " ")))
+```
+
+
+#### Product Purchase Frequency
+
+```{r}
+py$transactions_df$to_pandas() %>% 
+  group_by(product_id) %>% count() %>% 
+  mutate( perc = 100*n/nrow(transactions_wide_df) ) %>% 
+  left_join(py$products_df$to_pandas(), by = c("product_id"="id"))
+```
+
+
+#### Co-Purchase Matrix
+
+The co-purchase matrix shows how often products are bought together. The complementary pairs (shoes/socks, rackets/balls) show high co-occurrence counts, while cross-category pairs show minimal co-occurrence.
+
+```{python message=FALSE, warning=FALSE}
+
+@simple_cache("copurchase_matrix")
+def compute_copurchase_matrix(transactions, product_ids):
+    """Compute co-purchase frequency matrix."""
+    n = len(product_ids)
+    id_to_idx = {pid: i for i, pid in enumerate(product_ids)}
+    cooccur = np.zeros((n, n))
+
+    for transaction in transactions:
+        for i, p1 in enumerate(transaction):
+            for p2 in transaction[i+1:]:
+                if p1 in id_to_idx and p2 in id_to_idx:
+                    idx1, idx2 = id_to_idx[p1], id_to_idx[p2]
+                    cooccur[idx1, idx2] += 1
+                    cooccur[idx2, idx1] += 1
+
+    return cooccur
+```
+
+```{python message=FALSE, warning=FALSE}
+product_ids = products_df["id"].to_list()
+product_names = products_df["name"].to_list()
+
+cooccur_matrix = compute_copurchase_matrix(transactions, product_ids)
+
+cooccur_df = pd.DataFrame(
+    cooccur_matrix.astype(int),
+    index=product_names,
+    columns=product_names
+)
+```
+
+```{r}
+py$cooccur_df
+```
+
+## 2. Semantic Embeddings
+
+We use the `intfloat/multilingual-e5-base` sentence transformer to encode product descriptions. This captures semantic similarity based on the meaning of product descriptions.
+
+
+```{python message=FALSE, warning=FALSE}
+
+@simple_cache("semantic_embeddings")
+def compute_semantic_ebeddings(descriptions):
+  """ """
+  prompts = [f"passage: Product: '{desc}'" for desc in descriptions]
+
+  model_name = 'intfloat/multilingual-e5-base'
+  semantic_model = st.SentenceTransformer(model_name)
+  
+  embeddings_semantic = semantic_model.encode(
+      sentences=prompts,
+      show_progress_bar=True,
+      normalize_embeddings=True
+  )
+
+  return embeddings_semantic
+
+descriptions = products_df["description"].to_list()
+embeddings_semantic = compute_semantic_ebeddings(descriptions)
+
+```
+
+#### Semantic Similarity Matrix
+
+```{python message=FALSE, warning=FALSE}
+sim_semantic = cosine_similarity(embeddings_semantic, embeddings_semantic)
+
+print("Semantic Similarity Matrix (based on product descriptions):")
+sim_semantic_df = pd.DataFrame(
+    np.round(sim_semantic, 2),
+    index=product_names,
+    columns=product_names
+)
+```
+
+
+```{r}
+py$sim_semantic_df
+```
+
+## 3. Brand-Agnostic Semantic Embeddings
+
+The standard semantic embeddings capture brand names and product lines, causing products to cluster by brand rather than by function. To address this automatically, we use a local LLM to rewrite product descriptions, extracting only functional attributes while omitting brand and subbrand information.
+
+We use Qwen 2.5 (3B parameters) via Ollama - a multilingual model that runs well on laptop hardware and supports 29+ languages including English, Chinese, Spanish, French, German, Arabic, and many others.
+
+To install Ollama and the model:
+
+``` bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5:3b
+```
+
+```{python message=FALSE, warning=FALSE}
+import ollama
+
+def extract_functional_description(description, model="qwen2.5:3b"):
+    """
+    Use a local LLM to extract functional product attributes,
+    removing brand and subbrand information.
+    """
+    prompt = f"""Rewrite this product description in 1-2 sentences, focusing ONLY on:
+    - Product type and category
+    - Materials and construction
+    - Functional features and benefits
+    - Intended use case
+    
+    OMIT completely:
+    - Brand names (Nike, Adidas, etc.)
+    - Product line names (Air Zoom, Ultraboost, Dri-FIT, etc.)
+    - Marketing language
+    
+    Product description: {description}
+    
+    Functional description:"""
+    
+    response = ollama.generate(
+        model=model,
+        prompt=prompt,
+        options={"temperature": 0.1, "num_predict": 150}
+    )
+    assert response['response'] is not None, "No valid response from ollama."
+    
+    return response['response'].strip()
+```
+
+```{python message=FALSE, warning=FALSE}
+
+@simple_cache("nobrand_descriptions")
+def compute_nobrand_descriptions(descriptions):
+  descriptions_functional = []
+  for i, desc in enumerate(descriptions):
+      functional = extract_functional_description(desc)
+      descriptions_functional.append(functional)
+  return descriptions_functional
+
+compute_nobrand_descriptions(descriptions)
+
+```
+
+```{python message=FALSE, warning=FALSE}
+
+@simple_cache("embeddings_semantic_nobrand")
+def compute_embeddings_semantic_nobrand(descriptions_functional):
+  model_name = 'intfloat/multilingual-e5-base'
+  semantic_model = st.SentenceTransformer(model_name)
+
+  prompts_functional = [f"passage: Product: '{desc}'" for desc in descriptions_functional]
+  
+  print("Generating brand-agnostic semantic embeddings...")
+  embeddings_semantic_clean = semantic_model.encode(
+      sentences=prompts_functional,
+      show_progress_bar=True,
+      normalize_embeddings=True
+  )
+  
+  return embeddings_semantic_clean
+
+compute_embeddings_semantic_nobrand(descriptions_functional)
+```
+
+#### Brand-Agnostic Similarity Matrix
+
+```{python message=FALSE, warning=FALSE}
+sim_semantic_clean = cosine_similarity(embeddings_semantic_clean, embeddings_semantic_clean)
+
+print("Brand-Agnostic Semantic Similarity Matrix:")
+sim_semantic_clean_df = pd.DataFrame(
+    np.round(sim_semantic_clean, 2),
+    index=product_names,
+    columns=product_names
+)
+sim_semantic_clean_df
+```
+
+## 4. Transactional Embeddings
+
+We use Word2Vec with bootstrap aggregation to learn embeddings from transaction co-occurrence patterns. Each transaction is treated as a "sentence" where products are "words", and Word2Vec learns which products appear together.
+
+```{python message=FALSE, warning=FALSE}
+def encode_transactional_embeddings(product_ids, transactions, embedding_size=100, window=5, min_count=1, n_bootstrap=10):
+    """
+    Learn transactional embeddings with Word2Vec using bootstrap aggregation.
+    """
+    bootstrap_embeddings = []
+
+    for _ in range(n_bootstrap):
+        resampled = [random.sample(t, len(t)) for t in random.choices(transactions, k=len(transactions))]
+
+        model = Word2Vec(
+            resampled,
+            vector_size=embedding_size,
+            window=window,
+            min_count=min_count,
+            sg=0,
+            workers=4,
+            seed=random.randint(0, 10000)
+        )
+
+        emb_dict = {word: model.wv[word] for word in model.wv.index_to_key}
+        bootstrap_embeddings.append(emb_dict)
+
+    embeddings = []
+    for pid in product_ids:
+        product_embs = []
+        for emb_dict in bootstrap_embeddings:
+            if pid in emb_dict:
+                product_embs.append(emb_dict[pid])
+
+        if product_embs:
+            embeddings.append(np.mean(product_embs, axis=0))
+        else:
+            embeddings.append(np.zeros(embedding_size))
+
+    embeddings = np.array(embeddings)
+
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    embeddings = embeddings / norms
+
+    return embeddings
+```
+
+```{python message=FALSE, warning=FALSE}
+print("Generating transactional embeddings (bootstrap Word2Vec)...")
+
+max_basket_size = max(len(t) for t in transactions)
+
+embeddings_transactional = encode_transactional_embeddings(
+    product_ids=product_ids,
+    transactions=transactions,
+    embedding_size=10,
+    window=max_basket_size,
+    min_count=1,
+    n_bootstrap=20
+)
+
+print(f"Transactional embeddings shape: {embeddings_transactional.shape}")
+```
+
+#### Transactional Similarity Matrix
+
+```{python message=FALSE, warning=FALSE}
+sim_transactional = cosine_similarity(embeddings_transactional, embeddings_transactional)
+
+print("Transactional Similarity Matrix (based on co-purchase patterns):")
+sim_transactional_df = pd.DataFrame(
+    np.round(sim_transactional, 2),
+    index=product_names,
+    columns=product_names
+)
+sim_transactional_df
+```
+
+## 5. Comparing Similarity Measures
+
+The two similarity measures capture fundamentally different relationships. The correlation between them is low, indicating they provide complementary information.
+
+```{python message=FALSE, warning=FALSE}
+tril_idx = np.tril_indices(len(product_ids), k=-1)
+sem_vals = sim_semantic[tril_idx]
+trans_vals = sim_transactional[tril_idx]
+
+correlation = np.corrcoef(sem_vals, trans_vals)[0, 1]
+print(f"Correlation between semantic and transactional similarities: {correlation:.4f}")
+
+comparison_df = pd.DataFrame({
+    "semantic_similarity": sem_vals,
+    "transactional_similarity": trans_vals
+})
+```
+
+```{python fig.width=6, fig.height=5, message=FALSE, warning=FALSE}
+plot = (
+    ggplot(comparison_df, aes(x="semantic_similarity", y="transactional_similarity"))
+    + geom_point(size=3, alpha=0.7, color="steelblue")
+    + geom_abline(intercept=0, slope=1, linetype="dashed", color="red")
+    + labs(
+        x="Semantic Similarity (descriptions)",
+        y="Transactional Similarity (co-purchases)",
+        title=f"Semantic vs Transactional Similarity\n(Correlation: {correlation:.3f})"
+    )
+    + theme_minimal()
+    + coord_fixed(ratio=1)
+)
+print(plot)
+```
+
+#### Analysis of Product Pairs
+
+The table below shows how the two similarity measures differ for each product pair. Products with high transactional but low semantic similarity are complementary (bought together but semantically different). Products with high semantic but low transactional similarity are substitutes (similar category but not bought together).
+
+```{python message=FALSE, warning=FALSE}
+pair_analysis = []
+n = len(product_ids)
+for i in range(n):
+    for j in range(i+1, n):
+        pair_analysis.append({
+            "product_1": product_names[i],
+            "product_2": product_names[j],
+            "semantic": round(sim_semantic[i, j], 3),
+            "transactional": round(sim_transactional[i, j], 3),
+            "diff": round(sim_transactional[i, j] - sim_semantic[i, j], 3)
+        })
+
+pair_df = pl.DataFrame(pair_analysis).sort("diff", descending=True)
+
+print("Products with notable differences between similarity measures:")
+pair_df
+```
+
+## 6. Hierarchical Clustering
+
+We apply hierarchical clustering to each similarity matrix to visualize how products are grouped under each approach.
+
+```{python message=FALSE, warning=FALSE}
+def build_hierarchy(similarity_matrix, method="average"):
+    """Build hierarchical clustering from similarity matrix."""
+    distance = 1 - similarity_matrix
+    distance = np.clip(distance, 0, None)
+    condensed = squareform(distance, checks=False)
+    Z = linkage(condensed, method=method)
+    Z = np.clip(Z, 0, None)
+    return Z
+```
+
+```{python message=FALSE, warning=FALSE}
+Z_semantic = build_hierarchy(sim_semantic)
+Z_semantic_clean = build_hierarchy(sim_semantic_clean)
+Z_transactional = build_hierarchy(sim_transactional)
+#Z_fused = build_hierarchy(sim_fused)
+```
+
+#### Semantic Clustering (Product Descriptions)
+
+```{python message=FALSE, warning=FALSE}
+#| output: asis
+
+def compute_homogeneity(indices, similarity_matrix):
+    """Compute minimum similarity within a cluster."""
+    if len(indices) <= 1:
+        return 1.0
+    submatrix = similarity_matrix[np.ix_(indices, indices)]
+    np.fill_diagonal(submatrix, np.nan)
+    return float(np.nanmin(submatrix))
+
+def build_tree_json(node, labels, similarity_matrix):
+    """Build tree JSON for visualization."""
+    if node.is_leaf():
+        return [node.id], {
+            "name": str(labels[node.id]),
+            "homogeneity": 1.0
+        }
+
+    left_leaves, left_branch = build_tree_json(node.left, labels, similarity_matrix)
+    right_leaves, right_branch = build_tree_json(node.right, labels, similarity_matrix)
+    leaves = left_leaves + right_leaves
+
+    homogeneity = compute_homogeneity(leaves, similarity_matrix)
+
+    return leaves, {
+        "name": f"[{round(100*homogeneity)}%]",
+        "homogeneity": homogeneity,
+        "children": [left_branch, right_branch]
+    }
+
+def generate_tree_html(tree_json, container_id):
+    """Generate D3.js tree visualization HTML."""
+    tree_json_str = json.dumps(tree_json)
+
+    return f'''
+<style>
+  .node-{container_id} circle {{
+    fill: #fff;
+    stroke-width: 1px;
+  }}
+  .node-{container_id} text {{
+    font: 14px sans-serif;
+  }}
+  .link-{container_id} {{
+    fill: none;
+  }}
+  .hierarchy-container-{container_id} {{
+    width: 100%;
+    overflow-x: auto;
+  }}
+</style>
+
+<div class="hierarchy-container-{container_id}" id="{container_id}"></div>
+
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script>
+(function() {{
+  'use strict';
+
+  const treeData = {tree_json_str};
+  const colorScale = d3.scaleLinear().domain([0, 1]).range(['red', 'green']);
+  const containerId = '{container_id}';
+
+  class MyTree {{
+    constructor() {{
+      this.connector = function (d) {{
+        return 'M' + d.parent.y + ',' + d.parent.x + 'V' + d.x + 'H' + d.y;
+      }};
+      this.collapse = (d) => {{
+        if (d.children) {{
+          d._children = d.children;
+          d._children.forEach(this.collapse);
+          d.children = null;
+        }}
+      }};
+      this.click = (d) => {{
+        if (d.children) {{
+          d._children = d.children;
+          d.children = null;
+        }} else {{
+          d.children = d._children;
+          d._children = null;
+        }}
+        this.update(d);
+      }};
+      this.update = (source) => {{
+        this.width = 800;
+        let nodes = this.tree(this.root);
+        let nodesSort = [];
+        nodes.eachBefore(function (n) {{
+          nodesSort.push(n);
+        }});
+        this.height = Math.max(
+          500,
+          nodesSort.length * this.barHeight + this.margin.top + this.margin.bottom
+        );
+        let links = nodesSort.slice(1);
+        nodesSort.forEach((n, i) => {{
+          n.x = i * this.barHeight;
+        }});
+        d3.select('#' + containerId + ' svg')
+          .transition()
+          .duration(this.duration)
+          .attr('height', this.height);
+        let node = this.svg.selectAll('g.node-' + containerId).data(nodesSort, function (d) {{
+          return d.id || (d.id = ++this.i);
+        }});
+        var nodeEnter = node
+          .enter()
+          .append('g')
+          .attr('class', 'node-' + containerId)
+          .attr('transform', function () {{
+            return 'translate(' + source.y0 + ',' + source.x0 + ')';
+          }})
+          .on('click', this.click);
+        nodeEnter
+          .append('circle')
+          .attr('r', 1e-6)
+          .style('fill', function (d) {{
+            return d._children ? 'lightsteelblue' : '#fff';
+          }});
+        nodeEnter
+          .append('text')
+          .attr('x', 10)
+          .attr('dy', '.35em')
+          .style('fill', function (d) {{
+            return colorScale(d.data.homogeneity);
+          }})
+          .attr('text-anchor', 'start')
+          .text(function (d) {{
+            if (d.data.name.length > 200) {{
+              return d.data.name.substring(0, 200) + '...';
+            }} else {{
+              return d.data.name;
+            }}
+          }})
+          .style('fill-opacity', 1e-6);
+        nodeEnter.append('svg:title').text(function (d) {{
+          return d.data.name;
+        }});
+        let nodeUpdate = node
+          .merge(nodeEnter)
+          .transition()
+          .duration(this.duration);
+        nodeUpdate.attr('transform', function (d) {{
+          return 'translate(' + d.y + ',' + d.x + ')';
+        }});
+        nodeUpdate
+          .select('circle')
+          .attr('r', 4.5)
+          .style('fill', function (d) {{
+            return d._children ? colorScale(d.data.homogeneity) : '#fff';
+          }})
+          .style('stroke', function (d) {{
+            return colorScale(d.data.homogeneity);
+          }});
+        nodeUpdate.select('text').style('fill-opacity', 1);
+        var nodeExit = node.exit().transition().duration(this.duration);
+        nodeExit
+          .attr('transform', function (d) {{
+            return 'translate(' + source.y + ',' + source.x + ')';
+          }})
+          .remove();
+        nodeExit.select('circle').attr('r', 1e-6);
+        nodeExit.select('text').style('fill-opacity', 1e-6);
+        var link = this.svg.selectAll('path.link-' + containerId).data(links, function (d) {{
+          var id = d.id + '->' + d.parent.id;
+          return id;
+        }});
+        let linkEnter = link
+          .enter()
+          .insert('path', 'g')
+          .attr('class', 'link-' + containerId)
+          .attr('stroke', (d) => colorScale(d.data.homogeneity))
+          .attr('stroke-width', 1.5)
+          .attr('d', (d) => {{
+            var o = {{
+              x: source.x0,
+              y: source.y0,
+              parent: {{ x: source.x0, y: source.y0 }},
+            }};
+            return this.connector(o);
+          }});
+        link
+          .merge(linkEnter)
+          .transition()
+          .duration(this.duration)
+          .attr('d', this.connector);
+        link
+          .exit()
+          .transition()
+          .duration(this.duration)
+          .attr('d', (d) => {{
+            var o = {{
+              x: source.x,
+              y: source.y,
+              parent: {{ x: source.x, y: source.y }},
+            }};
+            return this.connector(o);
+          }})
+          .remove();
+        nodesSort.forEach(function (d) {{
+          d.x0 = d.x;
+          d.y0 = d.y;
+        }});
+      }};
+    }}
+    $onInit(data) {{
+      this.margin = {{ top: 20, right: 10, bottom: 20, left: 10 }};
+      this.width = 1000 - this.margin.right - this.margin.left;
+      this.height = 600 - this.margin.top - this.margin.bottom;
+      this.barHeight = 25;
+      this.barWidth = this.width * 0.8;
+      this.i = 0;
+      this.duration = 400;
+      this.tree = d3.tree().nodeSize([0, 30]);
+      this.root = this.tree(d3.hierarchy(data));
+      this.root.each((d) => {{
+        d.name = d.id;
+        d.id = this.i;
+        this.i++;
+      }});
+      this.root.x0 = this.root.x;
+      this.root.y0 = this.root.y;
+      this.svg = d3.select('#' + containerId)
+        .append('svg')
+        .attr('width', this.width + this.margin.right + this.margin.left)
+        .attr('height', this.height + this.margin.top + this.margin.bottom)
+        .append('g')
+        .attr('transform', 'translate(' + this.margin.left + ',' + this.margin.top + ')');
+      this.update(this.root);
+    }}
+  }}
+
+  let myTree = new MyTree();
+  myTree.$onInit(treeData);
+}})();
+</script>
+'''
+```
+
+```{python message=FALSE, warning=FALSE}
+#| output: asis
+
+root_semantic = to_tree(Z_semantic)
+_, tree_json_semantic = build_tree_json(root_semantic, product_names, sim_semantic)
+print(generate_tree_html(tree_json_semantic, "tree-semantic"))
+
+```
+
+#### Brand-Agnostic Semantic Clustering (LLM-Cleaned Descriptions)
+
+```{python message=FALSE, warning=FALSE}
+#| output: asis
+
+root_semantic_clean = to_tree(Z_semantic_clean)
+_, tree_json_semantic_clean = build_tree_json(root_semantic_clean, product_names, sim_semantic_clean)
+print(generate_tree_html(tree_json_semantic_clean, "tree-semantic-clean"))
+```
+
+#### Transactional Clustering (Co-Purchase Patterns)
+
+```{python message=FALSE, warning=FALSE}
+#| output: asis
+
+root_transactional = to_tree(Z_transactional)
+_, tree_json_transactional = build_tree_json(root_transactional, product_names, sim_transactional)
+print(generate_tree_html(tree_json_transactional, "tree-transactional"))
+```
+
+
+### Summary Heatmaps
+
+```{python message=FALSE, warning=FALSE}
+def create_heatmap_data(sim_matrix, labels, sim_type):
+    """Convert similarity matrix to long format for plotting."""
+    n = len(labels)
+    data = []
+    for i in range(n):
+        for j in range(n):
+            data.append({
+                "product_1": labels[i],
+                "product_2": labels[j],
+                "similarity": sim_matrix[i, j],
+                "type": sim_type
+            })
+    return data
+
+all_heatmap_data = (
+    create_heatmap_data(sim_semantic, product_names, "Semantic") +
+    create_heatmap_data(sim_semantic_clean, product_names, "Semantic (Clean)") +
+    create_heatmap_data(sim_transactional, product_names, "Transactional")
+    #+
+    #create_heatmap_data(sim_fused, product_names, "Fused")
+)
+
+heatmap_df = pd.DataFrame(all_heatmap_data)
+heatmap_df["type"] = pd.Categorical(heatmap_df["type"], categories=["Semantic", "Semantic (Clean)", "Transactional", "Fused"])
+
+```
+
+```{python fig.width=16, fig.height=8, message=FALSE, warning=FALSE}
+plot = (
+    ggplot(heatmap_df, aes(x="product_1", y="product_2", fill="similarity"))
+    + geom_tile()
+    + scale_fill_gradient2(low="blue", mid="white", high="red", midpoint=0.5)
+    + facet_wrap("~type", ncol=2)
+    + labs(title="Comparison of Similarity Measures", fill="Similarity")
+    + theme_minimal()
+    + theme(
+        axis_text_x=element_text(rotation=90, hjust=1, size=7),
+        axis_text_y=element_text(size=7),
+        figure_size=(16, 8)
+    )
+)
+print(plot)
+```
+
