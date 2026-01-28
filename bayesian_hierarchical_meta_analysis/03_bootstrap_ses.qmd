@@ -1,0 +1,263 @@
+---
+title: "Parametric Bootstrap Standard Errors"
+author: "Pavel Logačev"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(arrow)
+library(TMB)
+library(parallel)
+
+artifacts_dir <- "./_artifacts"
+```
+
+## Summary
+
+This notebook computes bootstrap standard errors for the price elasticity estimates from the local-level model. We use parametric bootstrap: simulate new data from the fitted model parameters, refit, and collect the distribution of estimates.
+
+## Load Data and Compiled Model
+
+```{r load-data}
+dyn.load(dynlib("local_level_fourier"))
+
+panel_daily <- read_parquet(file.path(artifacts_dir, "panel_daily.parquet"))
+fit_results <- read_parquet(file.path(artifacts_dir, "fit_results.parquet"))
+
+panel_df <- as.data.frame(panel_daily)
+fit_results_df <- as.data.frame(fit_results)
+```
+
+## Bootstrap Configuration
+
+```{r config}
+n_boot <- 200
+n_harmonics <- 3
+period <- 7
+max_fail_frac <- 0.5
+
+# For demo, limit series
+run_full <- FALSE
+demo_n_series <- 25
+
+if (!run_full) {
+  fit_results_df <- fit_results_df %>% head(demo_n_series)
+}
+```
+
+## Parametric Bootstrap Function
+
+The parametric bootstrap simulates new time series from the fitted state-space model:
+
+1. Generate state trajectory: $\alpha_t = \alpha_{t-1} + \eta_t$
+2. Generate observations: $y_t^* = \alpha_t + \beta x_t + \text{seasonal}_t + \varepsilon_t$
+3. Refit model to simulated data
+4. Collect bootstrap distribution of $\hat{\beta}$
+
+```{r bootstrap-function}
+bootstrap_series <- function(row) {
+  series_id_val <- row$series_id
+  product_id_val <- row$product_id
+
+  series_data <- panel_df %>%
+    filter(product_id == product_id_val) %>%
+    arrange(date)
+
+  log_y <- series_data$log_y
+  log_price <- series_data$log_price
+  n <- length(log_y)
+
+  # Find observed indices
+
+  obs_mask <- !is.na(log_y)
+  obs_idx <- which(obs_mask) - 1L
+
+  if (length(obs_idx) < 20) {
+    return(data.frame(
+      series_id = series_id_val,
+      bootstrap_se = NA_real_,
+      bootstrap_ci_lower = NA_real_,
+      bootstrap_ci_upper = NA_real_,
+      success_rate = 0
+    ))
+  }
+
+  # Extract fitted parameters
+  beta_hat <- row$beta_price
+  sigma_eta <- row$sigma_eta
+  sigma_eps <- row$sigma_eps
+  alpha0 <- mean(log_y, na.rm = TRUE)
+
+  # Get Fourier coefficients (approximate from original fit if not stored)
+  # For simplicity, we use zero seasonality in bootstrap simulation
+  gamma_hat <- rep(0, n_harmonics)
+  delta_hat <- rep(0, n_harmonics)
+
+  t_idx <- 0:(n - 1)
+
+  beta_boot <- numeric(0)
+  n_failures <- 0
+
+  for (b in 1:n_boot) {
+    tryCatch({
+      # Simulate states
+      alpha <- numeric(n)
+      alpha[1] <- alpha0 + rnorm(1, 0, sigma_eta)
+      for (t in 2:n) {
+        alpha[t] <- alpha[t - 1] + rnorm(1, 0, sigma_eta)
+      }
+
+      # Simulate seasonal component
+      seasonal <- rep(0, n)
+      for (k in 1:n_harmonics) {
+        freq <- 2 * pi * k * t_idx / period
+        seasonal <- seasonal + gamma_hat[k] * sin(freq) + delta_hat[k] * cos(freq)
+      }
+
+      # Simulate observations (only at observed time points)
+      y_star <- rep(NA_real_, n)
+      y_star[obs_mask] <- alpha[obs_mask] + beta_hat * log_price[obs_mask] +
+                          seasonal[obs_mask] + rnorm(sum(obs_mask), 0, sigma_eps)
+
+      # Prepare data for refitting
+      y_star_filled <- ifelse(is.na(y_star), 0, y_star)
+
+      data_boot <- list(
+        y = y_star_filled,
+        x = log_price,
+        t_idx = as.integer(t_idx),
+        n_harmonics = as.integer(n_harmonics),
+        period = as.numeric(period),
+        obs_idx = as.integer(obs_idx)
+      )
+
+      parameters <- list(
+        log_sigma_eta = log(sigma_eta),
+        log_sigma_eps = log(sigma_eps),
+        beta = beta_hat,
+        alpha0 = alpha0,
+        gamma = gamma_hat,
+        delta = delta_hat
+      )
+
+      obj <- MakeADFun(
+        data = data_boot,
+        parameters = parameters,
+        DLL = "local_level_fourier",
+        silent = TRUE
+      )
+
+      opt <- nlminb(
+        obj$par,
+        obj$fn,
+        obj$gr,
+        control = list(eval.max = 200, iter.max = 150)
+      )
+
+      if (opt$convergence == 0) {
+        # Extract beta from optimized parameters
+        beta_star <- opt$par["beta"]
+        if (!is.na(beta_star) && is.finite(beta_star)) {
+          beta_boot <- c(beta_boot, beta_star)
+        } else {
+          n_failures <- n_failures + 1
+        }
+      } else {
+        n_failures <- n_failures + 1
+      }
+    }, error = function(e) {
+      n_failures <<- n_failures + 1
+    })
+  }
+
+  success_rate <- length(beta_boot) / n_boot
+
+  if (length(beta_boot) < n_boot * (1 - max_fail_frac)) {
+    return(data.frame(
+      series_id = series_id_val,
+      bootstrap_se = NA_real_,
+      bootstrap_ci_lower = NA_real_,
+      bootstrap_ci_upper = NA_real_,
+      success_rate = success_rate
+    ))
+  }
+
+  data.frame(
+    series_id = series_id_val,
+    bootstrap_se = sd(beta_boot),
+    bootstrap_ci_lower = quantile(beta_boot, 0.025),
+    bootstrap_ci_upper = quantile(beta_boot, 0.975),
+    success_rate = success_rate
+  )
+}
+```
+
+## Run Bootstrap
+
+```{r run-bootstrap, warning=FALSE, message=FALSE}
+cat("Running parametric bootstrap for", nrow(fit_results_df), "series...\n")
+cat("Bootstrap samples per series:", n_boot, "\n")
+
+n_cores <- detectCores() - 1
+
+bootstrap_results_list <- mclapply(
+  1:nrow(fit_results_df),
+  function(i) bootstrap_series(fit_results_df[i, ]),
+  mc.cores = n_cores
+)
+
+bootstrap_results <- bind_rows(bootstrap_results_list)
+
+cat("Completed bootstrap for", sum(!is.na(bootstrap_results$bootstrap_se)), "series\n")
+```
+
+## Results Summary
+
+```{r results-summary}
+bootstrap_valid <- bootstrap_results %>%
+  filter(!is.na(bootstrap_se))
+
+bootstrap_valid %>%
+  summarize(
+    n_series = n(),
+    mean_bootstrap_se = mean(bootstrap_se, na.rm = TRUE),
+    median_bootstrap_se = median(bootstrap_se, na.rm = TRUE),
+    mean_success_rate = mean(success_rate, na.rm = TRUE)
+  )
+```
+
+```{r se-comparison, fig.width=7, fig.height=3}
+# Compare bootstrap SE to analytical SE
+comparison <- fit_results_df %>%
+  inner_join(bootstrap_results, by = "series_id") %>%
+  filter(!is.na(bootstrap_se), !is.na(beta_se))
+
+if (nrow(comparison) > 0) {
+  comparison %>%
+    ggplot(aes(x = beta_se, y = bootstrap_se)) +
+    geom_point(alpha = 0.6) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    theme_bw() +
+    labs(
+      title = "Analytical vs Bootstrap Standard Errors",
+      x = "Analytical SE (TMB)",
+      y = "Bootstrap SE"
+    ) +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+```
+
+## Save Results
+
+```{r save-results}
+write_parquet(bootstrap_results, file.path(artifacts_dir, "bootstrap_results.parquet"))
+```

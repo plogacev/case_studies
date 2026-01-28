@@ -1,0 +1,136 @@
+---
+title: "Meta-Analysis: Mimic Multilevel ARIMA"
+format: html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import polars as pl
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import joblib
+
+artifacts_dir = Path("./_artifacts")
+memory = joblib.Memory("./_cache", verbose=0)
+
+fit_results = pl.read_parquet(artifacts_dir / "fit_results.parquet")
+bootstrap_results = pl.read_parquet(artifacts_dir / "bootstrap_results.parquet")
+
+fit_results_pd = fit_results.to_pandas()
+bootstrap_results_pd = bootstrap_results.to_pandas()
+
+merged = fit_results_pd.merge(
+    bootstrap_results_pd,
+    on="series_id",
+    how="inner"
+)
+
+def select_se(row):
+    if row["success_rate"] >= 0.6 and not np.isnan(row["bootstrap_se"]):
+        return row["bootstrap_se"]
+    elif not np.isnan(row["qml_se"]):
+        return row["qml_se"]
+    else:
+        return row["naive_se"]
+
+merged["se_selected"] = merged.apply(select_se, axis=1)
+
+def dersimonian_laird(beta, se):
+    beta = np.array(beta)
+    se = np.array(se)
+    
+    w = 1.0 / (se ** 2)
+    w_sum = np.sum(w)
+    
+    beta_bar = np.sum(w * beta) / w_sum
+    
+    q = np.sum(w * (beta - beta_bar) ** 2)
+    k = len(beta)
+    
+    tau2_num = q - (k - 1)
+    tau2_den = w_sum - np.sum(w ** 2) / w_sum
+    
+    if tau2_den > 0 and tau2_num > 0:
+        tau2 = tau2_num / tau2_den
+    else:
+        tau2 = 0.0
+    
+    tau2 = max(0.0, tau2)
+    
+    w_star = 1.0 / (se ** 2 + tau2)
+    w_star_sum = np.sum(w_star)
+    
+    beta_pooled = np.sum(w_star * beta) / w_star_sum
+    se_pooled = np.sqrt(1.0 / w_star_sum)
+    
+    return {
+        "beta_pooled": beta_pooled,
+        "se_pooled": se_pooled,
+        "tau2": tau2
+    }
+
+meta_overall = dersimonian_laird(
+    merged["beta_price"].values,
+    merged["se_selected"].values
+)
+
+meta_overall_df = pd.DataFrame([meta_overall])
+meta_overall_df = pl.from_pandas(meta_overall_df)
+
+tau2_overall = meta_overall["tau2"]
+
+def compute_shrunken(beta, se, tau2):
+    beta = np.array(beta)
+    se = np.array(se)
+    
+    shrinkage = tau2 / (se ** 2 + tau2)
+    beta_shrunken = shrinkage * beta + (1 - shrinkage) * meta_overall["beta_pooled"]
+    
+    return beta_shrunken
+
+merged["beta_shrunken"] = compute_shrunken(
+    merged["beta_price"].values,
+    merged["se_selected"].values,
+    tau2_overall
+)
+
+shrunken_estimates = merged[["series_id", "site_id", "product_id", "beta_price", "beta_shrunken", "se_selected"]].copy()
+shrunken_estimates = pl.from_pandas(shrunken_estimates)
+
+meta_by_product_list = []
+for product_id in merged["product_id"].unique():
+    product_data = merged[merged["product_id"] == product_id]
+    if len(product_data) >= 2:
+        meta_prod = dersimonian_laird(
+            product_data["beta_price"].values,
+            product_data["se_selected"].values
+        )
+        meta_prod["product_id"] = product_id
+        meta_by_product_list.append(meta_prod)
+
+meta_by_product = pd.DataFrame(meta_by_product_list) if meta_by_product_list else pd.DataFrame(columns=["beta_pooled", "se_pooled", "tau2", "product_id"])
+meta_by_product = pl.from_pandas(meta_by_product)
+
+meta_by_site_list = []
+for site_id in merged["site_id"].unique():
+    site_data = merged[merged["site_id"] == site_id]
+    if len(site_data) >= 2:
+        meta_site = dersimonian_laird(
+            site_data["beta_price"].values,
+            site_data["se_selected"].values
+        )
+        meta_site["site_id"] = site_id
+        meta_by_site_list.append(meta_site)
+
+meta_by_site = pd.DataFrame(meta_by_site_list) if meta_by_site_list else pd.DataFrame(columns=["beta_pooled", "se_pooled", "tau2", "site_id"])
+meta_by_site = pl.from_pandas(meta_by_site)
+
+meta_overall_df.write_parquet(artifacts_dir / "meta_overall.parquet")
+meta_by_product.write_parquet(artifacts_dir / "meta_by_product.parquet")
+meta_by_site.write_parquet(artifacts_dir / "meta_by_site.parquet")
+shrunken_estimates.write_parquet(artifacts_dir / "shrunken_estimates.parquet")
+```

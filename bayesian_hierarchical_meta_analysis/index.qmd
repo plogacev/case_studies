@@ -1,0 +1,98 @@
+---
+title: "Bayesian Hierarchical Meta-Analysis of Price Elasticities"
+author:
+  name: "Pavel Logačev"
+  email: "pavel@example.com"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+## Summary
+
+This project estimates price elasticities from retail scanner data using state-space time series models and combines them via hierarchical meta-analysis. Each product-series is modeled independently using a local-level model with Fourier seasonality implemented in TMB (Template Model Builder). The resulting elasticity estimates are pooled using DerSimonian-Laird random-effects meta-analysis, which accounts for both estimation uncertainty and true heterogeneity across products. Empirical Bayes shrinkage produces refined estimates that borrow strength across series.
+
+## Methodology
+
+### Local-Level State-Space Model
+
+The time series model for each product captures:
+
+- **Stochastic trend**: A local level (random walk) component that allows the baseline demand to evolve over time
+- **Price effect**: Log-linear relationship between price and quantity (elasticity)
+- **Weekly seasonality**: Fourier terms capturing day-of-week patterns
+- **Observation noise**: Remaining unexplained variation
+
+The state-space formulation is:
+
+$$\alpha_{t+1} = \alpha_t + \eta_t, \quad \eta_t \sim N(0, \sigma_\eta^2)$$
+
+$$y_t = \alpha_t + \beta x_t + \sum_{k=1}^{K} \left[\gamma_k \sin\left(\frac{2\pi k t}{7}\right) + \delta_k \cos\left(\frac{2\pi k t}{7}\right)\right] + \varepsilon_t$$
+
+where $y_t = \log(\text{quantity}_t)$, $x_t = \log(\text{price}_t)$, and $\beta$ is the price elasticity.
+
+### Meta-Analysis Framework
+
+Individual elasticity estimates $\hat{\beta}_i$ with standard errors $\sigma_i$ are combined using:
+
+1. **DerSimonian-Laird pooling**: Estimates overall effect $\bar{\beta}$ and between-study variance $\tau^2$
+2. **Heterogeneity quantification**: $I^2$ statistic measures proportion of variance due to true differences
+3. **Empirical Bayes shrinkage**: Individual estimates pulled toward pooled mean based on relative precision
+
+## Notebooks
+
+### 1. Data Preparation
+
+Converts raw scanner data to analysis-ready time series format.
+
+[View Notebook](./01_data_prep.html)
+
+### 2. Model Fitting
+
+Fits TMB local-level models to each series, extracting price elasticity estimates with analytical standard errors.
+
+[View Notebook](./02_fit_local_level.html)
+
+### 3. Bootstrap Standard Errors
+
+Computes parametric bootstrap confidence intervals for robustness.
+
+[View Notebook](./03_bootstrap_ses.html)
+
+### 4. Meta-Analysis
+
+Pools estimates across series and computes shrunken estimates.
+
+[View Notebook](./04_meta_analysis.html)
+
+## Technical Details
+
+### TMB Implementation
+
+The model is implemented in C++ using TMB for:
+
+- Automatic differentiation for efficient gradient computation
+- Kalman filter for state-space likelihood evaluation
+- Laplace approximation for marginal likelihood (if using random effects)
+
+### Advantages Over ARIMA
+
+The local-level model with Fourier seasonality offers several advantages over traditional ARIMA:
+
+1. **Interpretable components**: Trend, seasonality, and regression effects are explicitly separated
+2. **Flexible seasonality**: Fourier terms handle non-integer or long seasonal periods naturally
+3. **State tracking**: The filtered states provide smoothed estimates of underlying trends
+4. **Unified framework**: Same model structure applies across all series (unlike auto.arima selection)
+5. **Efficient computation**: TMB's automatic differentiation enables fast optimization
+
+## References
+
+- Durbin, J., & Koopman, S. J. (2012). *Time Series Analysis by State Space Methods*. Oxford University Press.
+- Kristensen, K., et al. (2016). TMB: Automatic Differentiation and Laplace Approximation. *Journal of Statistical Software*, 70(5).
+- DerSimonian, R., & Laird, N. (1986). Meta-analysis in clinical trials. *Controlled Clinical Trials*, 7(3), 177-188.

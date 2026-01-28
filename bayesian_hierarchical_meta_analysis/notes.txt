@@ -1,0 +1,1 @@
+- Maybe try a series of HMMs, and a Bayesian meta-analysis. Not sure what the HMMs should be for, though.

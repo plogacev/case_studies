@@ -1,0 +1,124 @@
+---
+title: "Data Preparation: Panel to Series"
+format: html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import polars as pl
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import joblib
+
+cache_dir = Path("./_cache")
+artifacts_dir = Path("./_artifacts")
+cache_dir.mkdir(exist_ok=True)
+artifacts_dir.mkdir(exist_ok=True)
+
+memory = joblib.Memory("./_cache", verbose=0)
+
+df = pl.read_csv("./data/scanner_data.csv", ignore_errors=True)
+
+df = df.rename({
+    "SKU": "product_id",
+    "SKU_Category": "sku_category",
+    "Date": "date",
+    "Quantity": "quantity",
+    "Sales_Amount": "sales_amount"
+})
+
+df = df.with_columns([
+    pl.col("date").str.strptime(pl.Date, "%d/%m/%Y"),
+    pl.col("quantity").cast(pl.Float64),
+    pl.col("sales_amount").cast(pl.Float64)
+])
+
+df = df.filter(
+    (pl.col("quantity") > 0) & (pl.col("sales_amount") > 0)
+)
+
+df = df.with_columns([
+    (pl.col("sales_amount") / pl.col("quantity")).alias("unit_price")
+])
+
+panel_daily = df.group_by(["product_id", "date"]).agg([
+    pl.sum("quantity").alias("quantity"),
+    (pl.sum("sales_amount") / pl.sum("quantity")).alias("avg_unit_price")
+]).sort(["product_id", "date"])
+
+# panel_daily = panel_daily.with_columns([
+#     pl.col("quantity").log().alias("log_y"),
+#     pl.col("avg_unit_price").log().alias("log_price")
+# ])
+
+dates_obs = panel_daily.select("date").unique().sort("date")
+dates = pd.date_range( start=dates_obs["date"].min(), end=dates_obs["date"].max(), freq="D" )
+date_grid = pl.DataFrame({"date": dates}).with_columns(pl.col("date").cast(pl.Date))
+product_grid = panel_daily.select("product_id").unique()
+
+product_date_grid = product_grid.join(date_grid)
+
+series_list = []
+for product_id, group in panel_daily.group_by(["product_id"], maintain_order=True):
+    group_pd = group.to_pandas()
+    group_pd = group_pd.set_index("date")
+    
+    full_index = pd.date_range(
+        start=group_pd.index.min(),
+        end=group_pd.index.max(),
+        freq="D"
+    )
+    
+    group_pd = group_pd.reindex(full_index)
+    
+    group_pd["y"] = group_pd["y"].fillna(0.0)
+    
+    log_price_median = group_pd["log_price"].median()
+    group_pd["log_price"] = (
+        group_pd["log_price"]
+        .ffill()
+        .bfill()
+        .fillna(log_price_median)
+    )
+    
+    group_pd["log_y"] = np.log(group_pd["y"].replace(0, np.nan))
+    
+    group_pd["product_id"] = product_id
+    group_pd = group_pd.reset_index()
+    group_pd = group_pd.rename(columns={"index": "date"})
+    
+    series_list.append(group_pd)
+
+panel_daily_filled = pl.from_pandas(pd.concat(series_list, ignore_index=True))
+
+series_diagnostics = panel_daily_filled.group_by(["product_id"]).agg([
+    pl.count().alias("n_obs"),
+    (pl.col("y") > 0).sum().alias("n_nonzero"),
+    pl.col("log_price").n_unique().alias("n_price_unique")
+])
+
+min_obs = 60
+min_nonzero = 10
+min_price_unique = 8
+
+eligible_series = series_diagnostics.filter(
+    (pl.col("n_obs") >= min_obs) &
+    (pl.col("n_nonzero") >= min_nonzero) &
+    (pl.col("n_price_unique") >= min_price_unique)
+)
+
+panel_daily_final = panel_daily_filled.join(
+    eligible_series.select(["product_id"]),
+    on=["product_id"],
+    how="inner"
+)
+
+series_index = eligible_series.with_row_index("series_id")
+
+panel_daily_final.write_parquet(artifacts_dir / "panel_daily.parquet")
+series_index.write_parquet(artifacts_dir / "series_index.parquet")
+```

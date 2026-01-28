@@ -1,0 +1,271 @@
+---
+title: "Meta-Analysis of Price Elasticity Estimates"
+author: "Pavel Logačev"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(arrow)
+
+artifacts_dir <- "./_artifacts"
+```
+
+## Summary
+
+This notebook performs meta-analysis on the price elasticity estimates from the local-level models. We use the DerSimonian-Laird method to estimate the overall pooled effect and between-study heterogeneity ($\tau^2$), then compute empirical Bayes shrunken estimates for each series.
+
+## Load Results
+
+```{r load-data}
+fit_results <- read_parquet(file.path(artifacts_dir, "fit_results.parquet"))
+bootstrap_results <- read_parquet(file.path(artifacts_dir, "bootstrap_results.parquet"))
+
+fit_results_df <- as.data.frame(fit_results)
+bootstrap_results_df <- as.data.frame(bootstrap_results)
+
+merged <- fit_results_df %>%
+  inner_join(bootstrap_results_df, by = "series_id")
+
+cat("Series with both fit and bootstrap results:", nrow(merged), "\n")
+```
+
+## Select Best Standard Error
+
+We prioritize the SE estimate based on reliability:
+
+1. Bootstrap SE if success rate >= 0.6
+2. TMB analytical SE otherwise
+
+```{r select-se}
+merged <- merged %>%
+  mutate(
+    se_selected = case_when(
+      success_rate >= 0.6 & !is.na(bootstrap_se) ~ bootstrap_se,
+      !is.na(beta_se) ~ beta_se,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  filter(!is.na(se_selected), !is.na(beta_price), se_selected > 0)
+
+cat("Series with valid SE:", nrow(merged), "\n")
+```
+
+## DerSimonian-Laird Meta-Analysis
+
+The DerSimonian-Laird method is a random-effects meta-analysis approach that accounts for both within-study variance and between-study heterogeneity.
+
+```{r dersimonian-laird}
+dersimonian_laird <- function(beta, se) {
+  beta <- as.numeric(beta)
+  se <- as.numeric(se)
+
+  # Fixed-effect weights
+  w <- 1 / (se^2)
+  w_sum <- sum(w)
+
+  # Fixed-effect pooled estimate
+  beta_bar <- sum(w * beta) / w_sum
+
+  # Cochran's Q statistic
+  Q <- sum(w * (beta - beta_bar)^2)
+  k <- length(beta)
+
+  # Estimate tau^2 (between-study variance)
+  tau2_num <- Q - (k - 1)
+  tau2_den <- w_sum - sum(w^2) / w_sum
+
+  tau2 <- if (tau2_den > 0 && tau2_num > 0) {
+    tau2_num / tau2_den
+  } else {
+    0
+  }
+  tau2 <- max(0, tau2)
+
+  # Random-effects weights
+  w_star <- 1 / (se^2 + tau2)
+  w_star_sum <- sum(w_star)
+
+  # Random-effects pooled estimate
+  beta_pooled <- sum(w_star * beta) / w_star_sum
+  se_pooled <- sqrt(1 / w_star_sum)
+
+  # I^2 statistic (percentage of variance due to heterogeneity)
+  I2 <- if (Q > k - 1) {
+    100 * (Q - (k - 1)) / Q
+  } else {
+    0
+  }
+
+  list(
+    beta_pooled = beta_pooled,
+    se_pooled = se_pooled,
+    tau2 = tau2,
+    tau = sqrt(tau2),
+    Q = Q,
+    I2 = I2,
+    k = k
+  )
+}
+```
+
+## Overall Meta-Analysis
+
+```{r overall-meta}
+meta_overall <- dersimonian_laird(merged$beta_price, merged$se_selected)
+
+cat("=== Overall Meta-Analysis Results ===\n")
+cat("Number of series:", meta_overall$k, "\n")
+cat("Pooled price elasticity:", round(meta_overall$beta_pooled, 4), "\n")
+cat("Pooled SE:", round(meta_overall$se_pooled, 4), "\n")
+cat("95% CI: [",
+    round(meta_overall$beta_pooled - 1.96 * meta_overall$se_pooled, 4), ", ",
+    round(meta_overall$beta_pooled + 1.96 * meta_overall$se_pooled, 4), "]\n")
+cat("Between-study SD (tau):", round(meta_overall$tau, 4), "\n")
+cat("Heterogeneity (I^2):", round(meta_overall$I2, 1), "%\n")
+```
+
+## Empirical Bayes Shrinkage
+
+We compute shrunken estimates that pull individual series estimates toward the pooled mean, with the degree of shrinkage depending on each estimate's precision relative to the between-study variance.
+
+$$\hat{\beta}_i^{EB} = \frac{\tau^2}{\sigma_i^2 + \tau^2} \hat{\beta}_i + \frac{\sigma_i^2}{\sigma_i^2 + \tau^2} \bar{\beta}$$
+
+```{r shrinkage}
+tau2 <- meta_overall$tau2
+beta_pooled <- meta_overall$beta_pooled
+
+merged <- merged %>%
+  mutate(
+    shrinkage_factor = tau2 / (se_selected^2 + tau2),
+    beta_shrunken = shrinkage_factor * beta_price + (1 - shrinkage_factor) * beta_pooled
+  )
+```
+
+```{r shrinkage-plot, fig.width=7, fig.height=4}
+merged %>%
+  ggplot(aes(x = beta_price, y = beta_shrunken)) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = beta_pooled, linetype = "dotted", color = "red") +
+  theme_bw() +
+  labs(
+    title = "Empirical Bayes Shrinkage of Price Elasticity Estimates",
+    subtitle = paste0("Red line: pooled estimate (", round(beta_pooled, 3), ")"),
+    x = "Original Estimate",
+    y = "Shrunken Estimate"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Stratified Meta-Analysis by Product
+
+```{r meta-by-product}
+meta_by_product_list <- merged %>%
+  group_by(product_id) %>%
+  filter(n() >= 2) %>%
+  group_split() %>%
+  map(function(df) {
+    result <- dersimonian_laird(df$beta_price, df$se_selected)
+    data.frame(
+      product_id = unique(df$product_id),
+      n_series = result$k,
+      beta_pooled = result$beta_pooled,
+      se_pooled = result$se_pooled,
+      tau2 = result$tau2,
+      I2 = result$I2
+    )
+  })
+
+meta_by_product <- bind_rows(meta_by_product_list)
+
+if (nrow(meta_by_product) > 0) {
+  meta_by_product %>%
+    arrange(beta_pooled) %>%
+    head(10)
+}
+```
+
+## Forest Plot
+
+```{r forest-plot, fig.width=8, fig.height=6}
+# Select a subset for visualization
+plot_data <- merged %>%
+  slice_sample(n = min(30, nrow(merged))) %>%
+  arrange(beta_price) %>%
+  mutate(
+    series_label = paste0("Series ", row_number()),
+    ci_lower = beta_price - 1.96 * se_selected,
+    ci_upper = beta_price + 1.96 * se_selected
+  )
+
+ggplot(plot_data, aes(x = beta_price, y = reorder(series_label, beta_price))) +
+  geom_point(size = 2) +
+  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2) +
+  geom_vline(xintercept = beta_pooled, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray50") +
+  theme_bw() +
+  labs(
+    title = "Forest Plot of Price Elasticity Estimates",
+    subtitle = paste0("Red dashed line: pooled estimate (", round(beta_pooled, 3), ")"),
+    x = "Price Elasticity",
+    y = NULL
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.y = element_text(size = 8)
+  )
+```
+
+## Save Results
+
+```{r save-results}
+meta_overall_df <- data.frame(
+  beta_pooled = meta_overall$beta_pooled,
+  se_pooled = meta_overall$se_pooled,
+  tau2 = meta_overall$tau2,
+  tau = meta_overall$tau,
+  I2 = meta_overall$I2,
+  k = meta_overall$k
+)
+
+shrunken_estimates <- merged %>%
+  select(series_id, product_id, beta_price, beta_shrunken, se_selected, shrinkage_factor)
+
+write_parquet(as.data.frame(meta_overall_df), file.path(artifacts_dir, "meta_overall.parquet"))
+write_parquet(as.data.frame(meta_by_product), file.path(artifacts_dir, "meta_by_product.parquet"))
+write_parquet(as.data.frame(shrunken_estimates), file.path(artifacts_dir, "shrunken_estimates.parquet"))
+```
+
+## Interpretation
+
+```{r interpretation}
+cat("\n=== Key Findings ===\n\n")
+cat("1. Pooled Price Elasticity:", round(beta_pooled, 3), "\n")
+cat("   - A 1% increase in price is associated with a",
+    round(beta_pooled, 2), "% change in quantity demanded.\n\n")
+
+if (beta_pooled < 0) {
+  cat("   - The negative sign indicates demand decreases as price increases (as expected).\n\n")
+}
+
+cat("2. Heterogeneity (I^2 =", round(meta_overall$I2, 1), "%):\n")
+if (meta_overall$I2 > 75) {
+  cat("   - High heterogeneity suggests substantial variation in price sensitivity across products.\n")
+} else if (meta_overall$I2 > 50) {
+  cat("   - Moderate heterogeneity suggests meaningful variation in price sensitivity across products.\n")
+} else {
+  cat("   - Low heterogeneity suggests relatively consistent price sensitivity across products.\n")
+}
+
+cat("\n3. Between-study SD (tau =", round(meta_overall$tau, 3), "):\n")
+cat("   - Individual elasticities vary around the pooled estimate with this standard deviation.\n")
+```

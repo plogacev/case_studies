@@ -1,0 +1,147 @@
+---
+title: "Data Preparation: Panel to Series"
+author: "Pavel Logačev"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(data.table)
+library(arrow)
+
+cache_dir <- "./_cache"
+artifacts_dir <- "./_artifacts"
+dir.create(cache_dir, showWarnings = FALSE)
+dir.create(artifacts_dir, showWarnings = FALSE)
+```
+
+## Summary
+
+This notebook converts raw scanner data from panel format into individual time series suitable for time series modeling. Each product is separated into its own series with daily aggregation of quantity and unit pricing. Series are filtered based on minimum data quality requirements.
+
+## Load and Clean Data
+
+```{r load-data, warning=FALSE, message=FALSE}
+df <- fread("./data/scanner_data.csv")
+
+df <- df %>%
+  rename(
+    product_id = SKU,
+    sku_category = SKU_Category,
+    date = Date,
+    quantity = Quantity,
+    sales_amount = Sales_Amount
+  ) %>%
+  mutate(
+    date = as.Date(date, format = "%d/%m/%Y"),
+    quantity = as.numeric(quantity),
+    sales_amount = as.numeric(sales_amount)
+  ) %>%
+  filter(quantity > 0, sales_amount > 0) %>%
+  mutate(unit_price = sales_amount / quantity)
+```
+
+## Aggregate to Daily Level
+
+```{r aggregate-daily}
+panel_daily <- df %>%
+  group_by(product_id, date) %>%
+  summarize(
+    quantity = sum(quantity),
+    avg_unit_price = sum(sales_amount) / sum(quantity),
+    .groups = "drop"
+  ) %>%
+  arrange(product_id, date)
+```
+
+## Fill Missing Dates
+
+For each product, we create a complete daily sequence and fill missing values appropriately.
+
+```{r fill-dates}
+fill_series <- function(group_df) {
+  date_range <- seq(min(group_df$date), max(group_df$date), by = "day")
+
+  full_df <- data.frame(date = date_range) %>%
+    left_join(group_df, by = "date") %>%
+    mutate(
+      product_id = first(na.omit(product_id)),
+      y = replace_na(quantity, 0),
+      log_price = log(avg_unit_price)
+    )
+
+  # Forward-fill then backward-fill log_price, then use median if still NA
+  log_price_median <- median(full_df$log_price, na.rm = TRUE)
+  full_df$log_price <- zoo::na.locf(full_df$log_price, na.rm = FALSE)
+  full_df$log_price <- zoo::na.locf(full_df$log_price, fromLast = TRUE, na.rm = FALSE)
+  full_df$log_price <- replace_na(full_df$log_price, log_price_median)
+
+  # log_y with NA for zeros
+  full_df$log_y <- ifelse(full_df$y > 0, log(full_df$y), NA_real_)
+
+  full_df %>% select(product_id, date, y, log_y, log_price)
+}
+
+panel_daily_filled <- panel_daily %>%
+  group_by(product_id) %>%
+  group_split() %>%
+  map_dfr(fill_series)
+```
+
+## Filter Eligible Series
+
+We apply quality filters to ensure each series has sufficient data for reliable estimation.
+
+```{r filter-series}
+min_obs <- 60
+min_nonzero <- 10
+min_price_unique <- 8
+
+series_diagnostics <- panel_daily_filled %>%
+  group_by(product_id) %>%
+  summarize(
+    n_obs = n(),
+    n_nonzero = sum(y > 0),
+    n_price_unique = n_distinct(log_price),
+    .groups = "drop"
+  )
+
+eligible_series <- series_diagnostics %>%
+  filter(
+    n_obs >= min_obs,
+    n_nonzero >= min_nonzero,
+    n_price_unique >= min_price_unique
+  ) %>%
+  mutate(series_id = row_number() - 1L)
+
+panel_daily_final <- panel_daily_filled %>%
+  inner_join(eligible_series %>% select(product_id), by = "product_id")
+
+cat("Total series:", nrow(series_diagnostics), "\n")
+cat("Eligible series:", nrow(eligible_series), "\n")
+```
+
+## Save Artifacts
+
+```{r save-artifacts}
+write_parquet(panel_daily_final, file.path(artifacts_dir, "panel_daily.parquet"))
+write_parquet(eligible_series, file.path(artifacts_dir, "series_index.parquet"))
+```
+
+```{r summary-table}
+eligible_series %>%
+  summarize(
+    n_series = n(),
+    median_obs = median(n_obs),
+    median_nonzero = median(n_nonzero),
+    median_price_unique = median(n_price_unique)
+  )
+```

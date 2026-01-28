@@ -1,0 +1,239 @@
+---
+title: "Fit Local-Level Model Per Series"
+author: "Pavel Logačev"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+engine: knitr
+editor: visual
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(arrow)
+library(TMB)
+library(parallel)
+
+artifacts_dir <- "./_artifacts"
+```
+
+## Summary
+
+This notebook fits a local-level state-space model with Fourier seasonality to each time series using TMB (Template Model Builder). The model estimates price elasticity while accounting for stochastic trends and weekly seasonal patterns.
+
+## Model Specification
+
+The local-level model with Fourier seasonality is:
+
+**State equation:**
+$$\alpha_{t+1} = \alpha_t + \eta_t, \quad \eta_t \sim N(0, \sigma_\eta^2)$$
+
+**Observation equation:**
+$$y_t = \alpha_t + \beta \cdot x_t + \sum_{k=1}^{K} \left[\gamma_k \sin\left(\frac{2\pi k t}{7}\right) + \delta_k \cos\left(\frac{2\pi k t}{7}\right)\right] + \varepsilon_t$$
+
+where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$, $y_t$ is log quantity, $x_t$ is log price, and $\beta$ is the price elasticity.
+
+## Compile TMB Model
+
+```{r compile-tmb, warning=FALSE, message=FALSE, results='hide'}
+compile("local_level_fourier.cpp")
+dyn.load(dynlib("local_level_fourier"))
+```
+
+## Load Data
+
+```{r load-data}
+panel_daily <- read_parquet(file.path(artifacts_dir, "panel_daily.parquet"))
+series_index <- read_parquet(file.path(artifacts_dir, "series_index.parquet"))
+
+panel_df <- as.data.frame(panel_daily)
+series_index_df <- as.data.frame(series_index)
+```
+
+## Fitting Function
+
+```{r fit-function}
+n_harmonics <- 3  # Number of Fourier harmonics for weekly seasonality
+period <- 7       # Weekly period
+
+fit_series_tmb <- function(product_id_val, series_id_val) {
+  series_data <- panel_df %>%
+    filter(product_id == product_id_val) %>%
+    arrange(date)
+
+  log_y <- series_data$log_y
+  log_price <- series_data$log_price
+  n <- length(log_y)
+
+  # Find indices of non-NA observations
+  obs_idx <- which(!is.na(log_y)) - 1L  # 0-indexed for C++
+
+  # For NA values in log_y, replace with 0 (won't be used in likelihood)
+  log_y_filled <- ifelse(is.na(log_y), 0, log_y)
+
+  # Time index (0-indexed)
+  t_idx <- 0:(n - 1)
+
+  # TMB data
+  data <- list(
+    y = log_y_filled,
+    x = log_price,
+    t_idx = as.integer(t_idx),
+    n_harmonics = as.integer(n_harmonics),
+    period = as.numeric(period),
+    obs_idx = as.integer(obs_idx)
+  )
+
+  # Initial parameters
+  parameters <- list(
+    log_sigma_eta = log(0.1),
+    log_sigma_eps = log(0.5),
+    beta = -1.0,
+    alpha0 = mean(log_y, na.rm = TRUE),
+    gamma = rep(0, n_harmonics),
+    delta = rep(0, n_harmonics)
+  )
+
+  tryCatch({
+    # Create TMB object
+    obj <- MakeADFun(
+      data = data,
+      parameters = parameters,
+      DLL = "local_level_fourier",
+      silent = TRUE
+    )
+
+    # Optimize
+    opt <- nlminb(
+      obj$par,
+      obj$fn,
+      obj$gr,
+      control = list(eval.max = 500, iter.max = 400)
+    )
+
+    # Get standard errors via delta method
+    sdr <- sdreport(obj)
+    sdr_summary <- summary(sdr)
+
+    # Extract beta estimate and SE
+    beta_idx <- which(rownames(sdr_summary) == "beta")
+    beta_est <- sdr_summary[beta_idx, "Estimate"]
+    beta_se <- sdr_summary[beta_idx, "Std. Error"]
+
+    # Extract variance components
+    sigma_eta_idx <- which(rownames(sdr_summary) == "sigma_eta")
+    sigma_eps_idx <- which(rownames(sdr_summary) == "sigma_eps")
+
+    sigma_eta <- sdr_summary[sigma_eta_idx, "Estimate"]
+    sigma_eps <- sdr_summary[sigma_eps_idx, "Estimate"]
+
+    list(
+      series_id = series_id_val,
+      product_id = product_id_val,
+      beta_price = beta_est,
+      beta_se = beta_se,
+      sigma_eta = sigma_eta,
+      sigma_eps = sigma_eps,
+      convergence = opt$convergence,
+      nll = opt$objective,
+      n_obs = length(obs_idx),
+      failed = FALSE
+    )
+  }, error = function(e) {
+    list(
+      series_id = series_id_val,
+      product_id = product_id_val,
+      beta_price = NA_real_,
+      beta_se = NA_real_,
+      sigma_eta = NA_real_,
+      sigma_eps = NA_real_,
+      convergence = NA_integer_,
+      nll = NA_real_,
+      n_obs = sum(!is.na(log_y)),
+      failed = TRUE
+    )
+  })
+}
+```
+
+## Fit All Series
+
+```{r fit-all, warning=FALSE, message=FALSE}
+# For demo, limit to first 50 series; set run_full = TRUE for all
+run_full <- FALSE
+demo_n_series <- 50
+
+if (!run_full) {
+  series_to_fit <- series_index_df %>% head(demo_n_series)
+} else {
+  series_to_fit <- series_index_df
+}
+
+cat("Fitting", nrow(series_to_fit), "series...\n")
+
+# Fit in parallel
+n_cores <- detectCores() - 1
+
+results_list <- mclapply(
+  1:nrow(series_to_fit),
+  function(i) {
+    fit_series_tmb(
+      series_to_fit$product_id[i],
+      series_to_fit$series_id[i]
+    )
+  },
+  mc.cores = n_cores
+)
+
+# Combine results
+fit_results <- bind_rows(results_list)
+
+cat("Completed:", sum(!fit_results$failed), "/", nrow(fit_results), "series\n")
+cat("Failed:", sum(fit_results$failed), "series\n")
+```
+
+## Results Summary
+
+```{r results-summary}
+fit_success <- fit_results %>% filter(!failed)
+
+fit_success %>%
+  summarize(
+    n_series = n(),
+    mean_beta = mean(beta_price, na.rm = TRUE),
+    sd_beta = sd(beta_price, na.rm = TRUE),
+    median_beta = median(beta_price, na.rm = TRUE),
+    mean_se = mean(beta_se, na.rm = TRUE),
+    mean_sigma_eta = mean(sigma_eta, na.rm = TRUE),
+    mean_sigma_eps = mean(sigma_eps, na.rm = TRUE)
+  )
+```
+
+```{r beta-histogram, fig.width=7, fig.height=3}
+fit_success %>%
+  ggplot(aes(x = beta_price)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  geom_vline(xintercept = median(fit_success$beta_price, na.rm = TRUE),
+             linetype = "dashed", color = "red") +
+  theme_bw() +
+  labs(
+    title = "Distribution of Price Elasticity Estimates",
+    x = "Price Elasticity (beta)",
+    y = "Count"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Save Results
+
+```{r save-results}
+fit_success_df <- fit_results %>% filter(!failed)
+fit_failures_df <- fit_results %>% filter(failed)
+
+write_parquet(fit_success_df, file.path(artifacts_dir, "fit_results.parquet"))
+write_parquet(fit_failures_df, file.path(artifacts_dir, "fit_failures.parquet"))
+```

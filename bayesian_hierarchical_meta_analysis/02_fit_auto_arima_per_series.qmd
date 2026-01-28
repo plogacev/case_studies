@@ -1,0 +1,200 @@
+---
+title: "Fit Auto-ARIMA Per Series"
+format: html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import polars as pl
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import joblib
+from pmdarima import auto_arima
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+import warnings
+warnings.filterwarnings("ignore")
+
+artifacts_dir = Path("./_artifacts")
+memory = joblib.Memory("./_cache", verbose=0)
+
+panel_daily = pl.read_parquet(artifacts_dir / "panel_daily.parquet")
+series_index = pl.read_parquet(artifacts_dir / "series_index.parquet")
+
+panel_pd = panel_daily.to_pandas()
+series_index_pd = series_index.to_pandas()
+
+def fit_series(args):
+    series_id, site_id, product_id = args
+    
+    series_data = panel_pd[
+        (panel_pd["site_id"] == site_id) &
+        (panel_pd["product_id"] == product_id)
+    ].sort_values("date")
+    
+    log_y = series_data["log_y"].values
+    log_price = series_data["log_price"].values
+    
+    try:
+        auto_model = auto_arima(
+            log_y,
+            exogenous=log_price.reshape(-1, 1),
+            seasonal=True,
+            m=7,
+            max_p=2,
+            max_d=1,
+            max_q=2,
+            max_P=1,
+            max_D=1,
+            max_Q=1,
+            suppress_warnings=True,
+            error_action="ignore",
+            stepwise=True
+        )
+        
+        order = auto_model.order
+        seasonal_order = auto_model.seasonal_order
+        
+        sarimax_model = SARIMAX(
+            log_y,
+            exog=log_price,
+            order=order,
+            seasonal_order=seasonal_order,
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        )
+        
+        sarimax_fit = sarimax_model.fit(disp=False, maxiter=200)
+        
+        beta_price = sarimax_fit.params.get("x1", np.nan)
+        
+        naive_se = sarimax_fit.bse.get("x1", np.nan)
+        
+        try:
+            robust_result = sarimax_fit.get_robustcov_results(cov_type="HC0")
+            robust_se = robust_result.bse.get("x1", np.nan)
+        except:
+            robust_se = np.nan
+        
+        aic = sarimax_fit.aic
+        bic = sarimax_fit.bic
+        converged = sarimax_fit.mle_retvals.get("converged", False)
+        
+        return {
+            "series_id": series_id,
+            "site_id": site_id,
+            "product_id": product_id,
+            "order_p": order[0],
+            "order_d": order[1],
+            "order_q": order[2],
+            "seasonal_P": seasonal_order[0],
+            "seasonal_D": seasonal_order[1],
+            "seasonal_Q": seasonal_order[2],
+            "beta_price": beta_price,
+            "naive_se": naive_se,
+            "qml_se": robust_se,
+            "aic": aic,
+            "bic": bic,
+            "converged": converged,
+            "failed": False
+        }
+        
+    except Exception as e:
+        try:
+            auto_model = auto_arima(
+                log_y,
+                exogenous=log_price.reshape(-1, 1),
+                seasonal=False,
+                max_p=2,
+                max_d=1,
+                max_q=2,
+                suppress_warnings=True,
+                error_action="ignore",
+                stepwise=True
+            )
+            
+            order = auto_model.order
+            
+            sarimax_model = SARIMAX(
+                log_y,
+                exog=log_price,
+                order=order,
+                seasonal_order=(0, 0, 0, 0),
+                enforce_stationarity=False,
+                enforce_invertibility=False
+            )
+            
+            sarimax_fit = sarimax_model.fit(disp=False, maxiter=200)
+            
+            beta_price = sarimax_fit.params.get("x1", np.nan)
+            naive_se = sarimax_fit.bse.get("x1", np.nan)
+            
+            try:
+                robust_result = sarimax_fit.get_robustcov_results(cov_type="HC0")
+                robust_se = robust_result.bse.get("x1", np.nan)
+            except:
+                robust_se = np.nan
+            
+            aic = sarimax_fit.aic
+            bic = sarimax_fit.bic
+            converged = sarimax_fit.mle_retvals.get("converged", False)
+            
+            return {
+                "series_id": series_id,
+                "site_id": site_id,
+                "product_id": product_id,
+                "order_p": order[0],
+                "order_d": order[1],
+                "order_q": order[2],
+                "seasonal_P": 0,
+                "seasonal_D": 0,
+                "seasonal_Q": 0,
+                "beta_price": beta_price,
+                "naive_se": naive_se,
+                "qml_se": robust_se,
+                "aic": aic,
+                "bic": bic,
+                "converged": converged,
+                "failed": False
+            }
+        except Exception as e2:
+            return {
+                "series_id": series_id,
+                "site_id": site_id,
+                "product_id": product_id,
+                "order_p": np.nan,
+                "order_d": np.nan,
+                "order_q": np.nan,
+                "seasonal_P": np.nan,
+                "seasonal_D": np.nan,
+                "seasonal_Q": np.nan,
+                "beta_price": np.nan,
+                "naive_se": np.nan,
+                "qml_se": np.nan,
+                "aic": np.nan,
+                "bic": np.nan,
+                "converged": False,
+                "failed": True
+            }
+
+series_args = [
+    (row["series_id"], row["site_id"], row["product_id"])
+    for _, row in series_index_pd.iterrows()
+]
+
+results = joblib.Parallel(n_jobs=-1, verbose=1)(
+    joblib.delayed(fit_series)(args) for args in series_args
+)
+
+fit_results = pd.DataFrame(results)
+fit_results = pl.from_pandas(fit_results)
+
+fit_failures = fit_results.filter(pl.col("failed") == True)
+fit_results = fit_results.filter(pl.col("failed") == False)
+
+fit_results.write_parquet(artifacts_dir / "fit_results.parquet")
+fit_failures.write_parquet(artifacts_dir / "fit_failures.parquet")
+```

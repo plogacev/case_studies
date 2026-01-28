@@ -1,0 +1,162 @@
+---
+title: "Block Bootstrap Standard Errors"
+format: html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import polars as pl
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import joblib
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+import warnings
+warnings.filterwarnings("ignore")
+
+artifacts_dir = Path("./_artifacts")
+memory = joblib.Memory("./_cache", verbose=0)
+
+panel_daily = pl.read_parquet(artifacts_dir / "panel_daily.parquet")
+fit_results = pl.read_parquet(artifacts_dir / "fit_results.parquet")
+
+panel_pd = panel_daily.to_pandas()
+fit_results_pd = fit_results.to_pandas()
+
+n_boot = 200
+block_len = 7
+max_fail_frac = 0.5
+demo_n_series = 25
+run_full = False
+
+if not run_full:
+    fit_results_pd = fit_results_pd.head(demo_n_series)
+
+def bootstrap_series(row):
+    series_id = row["series_id"]
+    site_id = row["site_id"]
+    product_id = row["product_id"]
+    order_p = int(row["order_p"])
+    order_d = int(row["order_d"])
+    order_q = int(row["order_q"])
+    seasonal_P = int(row["seasonal_P"])
+    seasonal_D = int(row["seasonal_D"])
+    seasonal_Q = int(row["seasonal_Q"])
+    
+    series_data = panel_pd[
+        (panel_pd["site_id"] == site_id) &
+        (panel_pd["product_id"] == product_id)
+    ].sort_values("date")
+    
+    log_y = series_data["log_y"].values
+    log_price = series_data["log_price"].values
+    n = len(log_y)
+    
+    try:
+        order = (order_p, order_d, order_q)
+        seasonal_order = (seasonal_P, seasonal_D, seasonal_Q, 7) if seasonal_P > 0 or seasonal_D > 0 or seasonal_Q > 0 else (0, 0, 0, 0)
+        
+        sarimax_model = SARIMAX(
+            log_y,
+            exog=log_price,
+            order=order,
+            seasonal_order=seasonal_order,
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        )
+        
+        sarimax_fit = sarimax_model.fit(disp=False, maxiter=200)
+        
+        fitted_values = sarimax_fit.fittedvalues
+        residuals = sarimax_fit.resid
+        
+        beta_price_boot = []
+        n_failures = 0
+        
+        for b in range(n_boot):
+            resid_star = np.zeros(n)
+            n_blocks = (n + block_len - 1) // block_len
+            
+            for i in range(n_blocks):
+                start_idx = np.random.randint(0, n)
+                for j in range(block_len):
+                    idx = (start_idx + j) % n
+                    target_idx = i * block_len + j
+                    if target_idx < n:
+                        resid_star[target_idx] = residuals[idx]
+            
+            log_y_star = fitted_values + resid_star
+            
+            try:
+                sarimax_model_boot = SARIMAX(
+                    log_y_star,
+                    exog=log_price,
+                    order=order,
+                    seasonal_order=seasonal_order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False
+                )
+                
+                sarimax_fit_boot = sarimax_model_boot.fit(disp=False, maxiter=200)
+                beta_star = sarimax_fit_boot.params.get("x1", np.nan)
+                
+                if not np.isnan(beta_star):
+                    beta_price_boot.append(beta_star)
+                else:
+                    n_failures += 1
+            except:
+                n_failures += 1
+        
+        if len(beta_price_boot) == 0:
+            return {
+                "series_id": series_id,
+                "bootstrap_se": np.nan,
+                "bootstrap_ci_lower": np.nan,
+                "bootstrap_ci_upper": np.nan,
+                "success_rate": 0.0
+            }
+        
+        beta_price_boot = np.array(beta_price_boot)
+        bootstrap_se = np.std(beta_price_boot, ddof=1)
+        bootstrap_ci_lower = np.percentile(beta_price_boot, 2.5)
+        bootstrap_ci_upper = np.percentile(beta_price_boot, 97.5)
+        success_rate = len(beta_price_boot) / n_boot
+        
+        if success_rate < (1 - max_fail_frac):
+            return {
+                "series_id": series_id,
+                "bootstrap_se": np.nan,
+                "bootstrap_ci_lower": np.nan,
+                "bootstrap_ci_upper": np.nan,
+                "success_rate": success_rate
+            }
+        
+        return {
+            "series_id": series_id,
+            "bootstrap_se": bootstrap_se,
+            "bootstrap_ci_lower": bootstrap_ci_lower,
+            "bootstrap_ci_upper": bootstrap_ci_upper,
+            "success_rate": success_rate
+        }
+        
+    except Exception as e:
+        return {
+            "series_id": series_id,
+            "bootstrap_se": np.nan,
+            "bootstrap_ci_lower": np.nan,
+            "bootstrap_ci_upper": np.nan,
+            "success_rate": 0.0
+        }
+
+bootstrap_results_list = joblib.Parallel(n_jobs=-1, verbose=1)(
+    joblib.delayed(bootstrap_series)(row) for _, row in fit_results_pd.iterrows()
+)
+
+bootstrap_results = pd.DataFrame(bootstrap_results_list)
+bootstrap_results = pl.from_pandas(bootstrap_results)
+
+bootstrap_results.write_parquet(artifacts_dir / "bootstrap_results.parquet")
+```
